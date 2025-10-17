@@ -45,7 +45,7 @@ image = (
 # --- Class untuk Inference Model ---
 @app.cls(
     image=image,
-    gpu="L4",  # T4 atau yang lebih baik sangat direkomendasikan
+    gpu="L40S",  # T4 atau yang lebih baik sangat direkomendasikan
     # Rahasia untuk otentikasi Hugging Face dan API Key Anda
     secrets=[
         modal.Secret.from_name("huggingface-secret"), # WAJIB untuk download model
