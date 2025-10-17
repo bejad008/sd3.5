@@ -38,6 +38,7 @@ image = (
         "safetensors",
         "Pillow",
         "bitsandbytes",
+        "sentencepiece",
     )
 )
 
