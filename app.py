@@ -27,12 +27,16 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 # -------------------------------------------------------------------
 # FIX 1 & 2: liblzma5 (buat _lzma) DAN libgomp1 (buat torch)
 # -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# FIX 1 & 2: liblzma5 (buat _lzma) DAN libgomp1 (buat torch)
+# -------------------------------------------------------------------
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5", "libgomp1") 
     .pip_install(
         "fastapi[standard]",
         "torch==2.1.0",
+        "numpy<2.0",  # <--- TAMBAHKAN INI BUAT FIX ERROR
         "diffusers==0.24.0",
         "transformers==4.35.2",
         "accelerate==0.25.0",
