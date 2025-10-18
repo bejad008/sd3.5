@@ -12,7 +12,7 @@ import warnings
 from pathlib import Path
 
 # Inisialisasi Modal app
-app = modal.App("civitai-api-fastapi-sdxl-refiner")
+app = modal.App("civitai-api-fastapi")
 
 # Default prompts (sudah bagus)
 DEFAULT_NEGATIVE_PROMPT = (
