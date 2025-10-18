@@ -57,7 +57,7 @@ CACHE_DIR = "/model_cache"
     ],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
-    timeout=1800
+    timeout=1800,
     max_inputs=10
 )
   # OPTIMASI: 10 concurrent per container
@@ -183,7 +183,7 @@ class SD35Model:
     ],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
-    timeout=1800
+    timeout=1800,
     max_inputs=10
 )
   # OPTIMASI: 10 concurrent per container
