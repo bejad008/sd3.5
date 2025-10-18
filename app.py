@@ -26,8 +26,10 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    # liblzma5 kita biarin aja, buat jaga-jaga kalo safetensors butuh
-    .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5") 
+    # -------------------------------------------------------------------
+    # "libgomp1" DITAMBAHIN DI SINI
+    # -------------------------------------------------------------------
+    .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5", "libgomp1") 
     .pip_install(
         "fastapi[standard]",
         "torch==2.1.0",
