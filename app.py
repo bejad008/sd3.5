@@ -4,6 +4,7 @@ import base64
 import os
 from pathlib import Path
 
+# Ganti nama app-nya kalo lo mau, tapi ini ga wajib
 app = modal.App("civitai-api-fastapi")
 
 DEFAULT_NEGATIVE_PROMPT = (
@@ -26,7 +27,10 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6") 
+    # -------------------------------------------------------------------
+    # FIX 1: "liblzma5" DITAMBAHKAN DI SINI BUAT ERROR _lzma
+    # -------------------------------------------------------------------
+    .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5") 
     .pip_install(
         "fastapi[standard]",
         "torch==2.1.0",
@@ -103,7 +107,12 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
 @app.function(
     image=image,
     volumes={MODEL_DIR: model_volume},
-    timeout=3600
+    timeout=3600,
+    # -------------------------------------------------------------------
+    # FIX 2: SECRET HUGGING FACE DITAMBAHKAN DI SINI
+    # (Nama "huggingface-secret" harus sama persis kayak di screenshot lo)
+    # -------------------------------------------------------------------
+    secrets=[modal.Secret.from_name("huggingface-secret")]
 )
 def download_models():
     """Download Base Model dari CivitAI"""
@@ -125,6 +134,7 @@ def download_models():
     )
     
     print("\n[2/2] Preload Refiner + VAE dari HuggingFace...")
+    # Token dari secret akan otomatis dipake di sini
     vae = AutoencoderKL.from_pretrained(
         VAE_MODEL_ID,
         torch_dtype=torch.float16,
@@ -134,6 +144,7 @@ def download_models():
     )
     print("✓ VAE preloaded")
     
+    # Token dari secret akan otomatis dipake di sini
     refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
         REFINER_MODEL_ID,
         torch_dtype=torch.float16,
@@ -154,7 +165,11 @@ def download_models():
     image=image,
     gpu="L4", 
     volumes={MODEL_DIR: model_volume},
-    scaledown_window=200 
+    scaledown_window=200,
+    # -------------------------------------------------------------------
+    # FIX 2 (lagi): SECRET HUGGING FACE JUGA DITAMBAHKAN DI SINI
+    # -------------------------------------------------------------------
+    secrets=[modal.Secret.from_name("huggingface-secret")]
 )
 class ModelInference:
     @modal.enter()
@@ -172,6 +187,7 @@ class ModelInference:
         
         try:
             print("\n[1/3] Memuat VAE...")
+            # Token dari secret akan otomatis dipake di sini
             self.vae = AutoencoderKL.from_pretrained(
                 VAE_MODEL_ID,
                 torch_dtype=torch.float16,
@@ -194,6 +210,7 @@ class ModelInference:
             print("✓ Base Model dimuat")
             
             print("\n[3/3] Memuat Refiner Model...")
+            # Token dari secret akan otomatis dipake di sini
             self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
                 REFINER_MODEL_ID,
                 torch_dtype=torch.float16,
@@ -337,6 +354,7 @@ class ModelInference:
 
 @app.function(
     image=image,
+    # Jangan lupa lo punya secret API_KEY, tetep dipake
     secrets=[modal.Secret.from_name("custom-secret")]
 )
 @modal.asgi_app()
