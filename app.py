@@ -1,7 +1,7 @@
 """
 Deploy Model CivitAI ke Modal.com dengan FastAPI
 Features: Text-to-Image, Image-to-Image, Uncensored
-VERSI 4.1 - L4, Seed 5, Steps 30
+VERSI 4.2 - Perbaikan libGL.so.1 (OpenCV)
 """
 
 import modal 
@@ -36,13 +36,18 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 # Definisikan image dengan dependencies
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    
+    # --- PERBAIKAN: Menambahkan dependency sistem libGL.so.1 ---
+    .apt_install("libgl1-mesa-glx") 
+    # -----------------------------------------------------------
+    
     .pip_install(
         "fastapi[standard]",
         "torch",
         "diffusers",
         "transformers",
         "accelerate",
-        "safetensors",
+        "safensors",
         "Pillow",
         "requests",
         "invisible-watermark", 
@@ -149,9 +154,9 @@ def download_models():
 # Class untuk inference
 @app.cls(
     image=image,
-    gpu="L4", # --- PERUBAHAN 1: GPU diubah ke L4 ---
+    gpu="L4", 
     volumes={MODEL_DIR: model_volume},
-    scaledown_window=200 # --- PERUBAHAN 2: container_idle_timeout diubah ke scaledown_window ---
+    scaledown_window=200 
 )
 class ModelInference:
     @modal.enter()
@@ -199,7 +204,7 @@ class ModelInference:
         self, 
         prompt: str, 
         negative_prompt: str = "", 
-        num_steps: int = 30, # --- PERUBAHAN 3: Default steps diubah ke 30 ---
+        num_steps: int = 30, 
         guidance_scale: float = 7.5,
         width: int = 1024,
         height: int = 1024,
@@ -225,7 +230,7 @@ class ModelInference:
         image_latents = self.base_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
-            num_inference_steps=num_steps, # Menggunakan num_steps
+            num_inference_steps=num_steps, 
             guidance_scale=guidance_scale,
             width=width,
             height=height,
@@ -237,7 +242,7 @@ class ModelInference:
         image = self.refiner_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
-            num_inference_steps=num_steps, # Menggunakan num_steps
+            num_inference_steps=num_steps, 
             guidance_scale=guidance_scale,
             generator=generator,
             image=image_latents, 
@@ -264,7 +269,7 @@ class ModelInference:
         init_image_b64: str,
         prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 30, # --- PERUBAHAN 4: Default steps diubah ke 30 ---
+        num_steps: int = 30, 
         guidance_scale: float = 7.5,
         strength: float = 0.75,
         seed: int = -1,
@@ -293,7 +298,7 @@ class ModelInference:
             negative_prompt=final_negative_prompt,
             image=init_image,
             strength=strength,
-            num_inference_steps=num_steps, # Menggunakan num_steps
+            num_inference_steps=num_steps, 
             guidance_scale=guidance_scale,
             generator=generator
         ).images[0]
@@ -329,7 +334,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "4.1", # Versi diperbarui
+            "version": "4.2", # Versi diperbarui
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
@@ -365,7 +370,7 @@ def fastapi_app():
             
             kwargs = {
                 "prompt": prompt,
-                "num_steps": data.get("num_steps", 30), # --- PERUBAHAN 5: Default steps diubah ke 30 ---
+                "num_steps": data.get("num_steps", 30), 
                 "guidance_scale": data.get("guidance_scale", 7.5),
                 "width": data.get("width", 1024),
                 "height": data.get("height", 1024),
@@ -407,10 +412,10 @@ def fastapi_app():
             kwargs = {
                 "init_image_b64": init_image,
                 "prompt": prompt,
-                "num_steps": data.get("num_steps", 30), # --- PERUBAHAN 6: Default steps diubah ke 30 ---
+                "num_steps": data.get("num_steps", 30), 
                 "guidance_scale": data.get("guidance_scale", 7.5),
                 "strength": data.get("strength", 0.75),
-                "seed": data.get("seed", 5), # --- PERUBAHAN 7: Default seed diubah ke 5 ---
+                "seed": data.get("seed", 5), 
                 "enhance_prompt": data.get("enhance_prompt", True)
             }
             
