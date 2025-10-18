@@ -4,7 +4,7 @@ import base64
 import os
 from pathlib import Path
 
-app = modal.App("civitai-api-fastapi-v2")
+app = modal.App("civitai-api-fastapi") # <-- Nama app sudah dibalikin
 
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
@@ -23,6 +23,7 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 # untuk memastikan QwenImageEditPipeline ada.
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")  # <--- FIX ERROR 'git' not found
     .pip_install(
         "fastapi[standard]",
         "torch",
