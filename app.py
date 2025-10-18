@@ -42,7 +42,7 @@ model_cache = modal.Volume.from_name("sdxl-juggernaut-cache-vol", create_if_miss
 CACHE_DIR = "/model_cache"
 
 # --- URL Download Langsung Juggernaut v9 dari Civitai ---
-JUGGERNAUT_V9_URL = "https://civitai.com/api/download/models/257749"
+JUGGERNAUT_V9_URL = "https://civitai.com/api/download/models/1759168?type=Model&format=SafeTensor&size=full&fp=fp16"
 JUGGERNAUT_V9_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors" # Nama file bisa disesuaikan
 
 @app.cls(
@@ -53,7 +53,7 @@ JUGGERNAUT_V9_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors" # Nama file
         modal.Secret.from_name("custom-secret")
     ],
     volumes={CACHE_DIR: model_cache},
-    container_idle_timeout=300,
+    scaledown_window=300,
     timeout=1800
 )
 class ModelInference:
