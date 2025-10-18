@@ -47,7 +47,7 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L4",  # L4 (24GB) cukup untuk Stable Diffusion 3.5
+    gpu="L40S",  # L4 (24GB) cukup untuk Stable Diffusion 3.5
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -161,7 +161,7 @@ class SD35Model:
 
 @app.cls(
     image=image,
-    gpu="L40S",  # <-- DIUBAH: Menggunakan 1x GPU L40S (48GB VRAM)
+    gpu="H100",  # <-- DIUBAH: Menggunakan 1x GPU L40S (48GB VRAM)
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
