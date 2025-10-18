@@ -34,7 +34,7 @@ image = (
     )
 )
 
-model_cache = modal.Volume.persisted("sd3-model-cache-vol")
+model_cache = modal.Volume.from_name("sd3-model-cache-vol", create_if_missing=True)
 CACHE_DIR = "/model_cache"
 
 @app.cls(
@@ -235,7 +235,7 @@ def fastapi_app():
             
             prompt = data.get("prompt")
             if not prompt:
-                raise HTTPException(status_code=400, detail="prompt is required")
+                raise HTTPException(status_code=400, detail="Prompt is required")
             
             kwargs = {
                 "init_image_b64": init_image,
