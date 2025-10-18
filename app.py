@@ -36,7 +36,7 @@ image = (
         "git+https://github.com/huggingface/diffusers.git",
         "transformers",
         "accelerate",
-        "safensors",
+        "safetensors",
         "Pillow",
         "sentencepiece",
     )
