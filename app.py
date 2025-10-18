@@ -40,7 +40,7 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L40S",
+    gpu="A100", # <-- DIGANTI SESUAI REQUEST LO
     secrets=[
         modal.Secret.from_name("huggingface-secret"),
         modal.Secret.from_name("custom-secret")
@@ -58,7 +58,7 @@ class ModelInference:
         os.makedirs(CACHE_DIR, exist_ok=True)
         self.device = "cuda" # Definisikan device
         
-        # --- PERBAIKAN DI SINI ---
+        # --- INI LOGIKA YANG BENER (Sistem Ganti Jaga) ---
         # 1. Load Model SD 3.5 (TAPI JANGAN .to("cuda") DULU)
         print("Memuat model Stable Diffusion 3.5 Large...")
         model_id_sd3 = "stabilityai/stable-diffusion-3.5-large"
@@ -101,7 +101,7 @@ class ModelInference:
 
         print(f"Text-to-Image (SD3.5): {enhanced_prompt[:100]}...")
         
-        # --- PERBAIKAN DI SINI ---
+        # --- Sistem Ganti Jaga ---
         print("Memindahkan SD3.5 ke GPU...")
         self.sd3_pipe.to(self.device)
         print("✓ SD3.5 di GPU.")
@@ -118,7 +118,7 @@ class ModelInference:
             generator=generator
         ).images[0]
         
-        # --- PERBAIKAN DI SINI ---
+        # --- Sistem Ganti Jaga ---
         print("Memindahkan SD3.5 kembali ke CPU...")
         self.sd3_pipe.to("cpu")
         print("✓ SD3.5 di CPU.")
@@ -152,7 +152,7 @@ class ModelInference:
         
         print(f"Image-to-Image (Qwen): {prompt[:100]}...")
         
-        # --- PERBAIKAN DI SINI ---
+        # --- Sistem Ganti Jaga ---
         print("Memindahkan Qwen ke GPU...")
         self.qwen_pipe.to(self.device)
         print("✓ Qwen di GPU.")
@@ -171,7 +171,7 @@ class ModelInference:
             num_inference_steps=num_steps
         ).images[0]
         
-        # --- PERBAIKAN DI SINI ---
+        # --- Sistem Ganti Jaga ---
         print("Memindahkan Qwen kembali ke CPU...")
         self.qwen_pipe.to("cpu")
         print("✓ Qwen di CPU.")
@@ -204,7 +204,8 @@ def fastapi_app():
     async def root():
         return {
             "service": "Multi-Model API",
-            "version": "2.2-OOM-FIX (SD3.5 + Qwen-Edit)", # Update versi
+            "version": "2.2-OOM-FIX (SD3.5 + Qwen-Edit)",
+            "gpu": "A100", # Info GPU
             "endpoints": {
                 "health": "GET /health",
                 "text-to-image": "POST /text2img (Stable Diffusion 3.5)",
@@ -247,7 +248,7 @@ def fastapi_app():
             print(f"Error processing request: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    @web_st/img2img")
+    @web_app.post("/img2img")
     async def image_to_image_endpoint(request: Request):
         try:
             data = await request.json()
