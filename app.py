@@ -47,7 +47,7 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="A100",
+    gpu="L40S",
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -161,7 +161,7 @@ class SD35Model:
 
 @app.cls(
     image=image,
-    gpu="A100",
+    gpu="L40S",
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
