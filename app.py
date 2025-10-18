@@ -63,7 +63,7 @@ CACHE_DIR = "/model_cache"
         modal.Secret.from_name("huggingface-secret"),
     ],
     volumes={CACHE_DIR: model_cache},
-    dcaledown_window=300,
+    scaledown_window=300,
     timeout=900,
     # KUNCI: Allow 10 concurrent requests per container
     allow_concurrent_inputs=10,
