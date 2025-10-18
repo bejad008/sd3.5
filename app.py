@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 import gc
 
-app = modal.App("civitai-api-fastapi")  # TETAP ORIGINAL
+app = modal.App("civitai-api-fastapi")
 
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
@@ -45,24 +45,16 @@ image = (
 model_cache = modal.Volume.from_name("sd3-model-cache-vol", create_if_missing=True)
 CACHE_DIR = "/model_cache"
 
-# ============================================================================
-# OPTIMASI: Pisahkan SD3.5 ke container sendiri (TETAP MODEL ORIGINAL LO)
-# ============================================================================
-
 @app.cls(
     image=image,
     gpu="A100",
-    secrets=[
-        modal.Secret.from_name("huggingface-secret"),
-    ],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
     max_inputs=10
 )
-  # OPTIMASI: 10 concurrent per container
 class SD35Model:
-    """Dedicated container untuk SD3.5 - LANGSUNG DI GPU, NO SWITCHING"""
     
     @modal.enter()
     def load_model(self):
@@ -73,7 +65,7 @@ class SD35Model:
         self.device = "cuda"
         
         print("Memuat model Stable Diffusion 3.5 Large...")
-        model_id_sd3 = "stabilityai/stable-diffusion-3.5-large"  # TETAP MODEL LO
+        model_id_sd3 = "stabilityai/stable-diffusion-3.5-large"
         self.pipe = StableDiffusion3Pipeline.from_pretrained(
             model_id_sd3,
             torch_dtype=torch.float16,
@@ -81,10 +73,8 @@ class SD35Model:
             cache_dir=CACHE_DIR
         )
         
-        # OPTIMASI: Langsung ke GPU, no CPU switching
         self.pipe.to(self.device)
         
-        # Memory optimizations
         if hasattr(self.pipe, 'enable_attention_slicing'):
             self.pipe.enable_attention_slicing(1)
         if hasattr(self.pipe, 'enable_vae_slicing'):
@@ -96,7 +86,7 @@ class SD35Model:
         except:
             pass
         
-        print("✓ Model SD 3.5 Large berhasil dimuat (DI GPU - OPTIMIZED)")
+        print("✓ Model SD 3.5 Large berhasil dimuat (DI GPU)")
     
     def _validate_dimensions(self, width: int, height: int) -> tuple:
         width = max(MIN_IMAGE_SIZE, min(width, MAX_IMAGE_SIZE))
@@ -133,7 +123,6 @@ class SD35Model:
             
             generator = torch.Generator(device=self.device).manual_seed(seed) if seed != -1 else None
 
-            # OPTIMASI: No CPU/GPU switching, langsung inference
             with torch.inference_mode():
                 image = self.pipe(
                     prompt=enhanced_prompt,
@@ -145,7 +134,6 @@ class SD35Model:
                     generator=generator
                 ).images[0]
             
-            # Cleanup after inference
             del generator
             torch.cuda.empty_cache()
             gc.collect()
@@ -171,24 +159,16 @@ class SD35Model:
                 "error": str(e)
             }
 
-# ============================================================================
-# OPTIMASI: Pisahkan Qwen ke container sendiri (TETAP MODEL ORIGINAL LO)
-# ============================================================================
-
 @app.cls(
     image=image,
     gpu="A100",
-    secrets=[
-        modal.Secret.from_name("huggingface-secret"),
-    ],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
     max_inputs=10
 )
-  # OPTIMASI: 10 concurrent per container
 class QwenModel:
-    """Dedicated container untuk Qwen - LANGSUNG DI GPU, NO SWITCHING"""
     
     @modal.enter()
     def load_model(self):
@@ -199,7 +179,7 @@ class QwenModel:
         self.device = "cuda"
         
         print("Memuat model Qwen Image Edit...")
-        model_id_qwen = "Qwen/Qwen-Image-Edit"  # TETAP MODEL LO
+        model_id_qwen = "Qwen/Qwen-Image-Edit"
         self.pipe = AutoPipelineForImage2Image.from_pretrained(
             model_id_qwen,
             torch_dtype=torch.bfloat16,
@@ -207,10 +187,8 @@ class QwenModel:
             token=os.environ.get("HF_TOKEN"),
         )
         
-        # OPTIMASI: Langsung ke GPU, no CPU switching
         self.pipe.to(self.device)
         
-        # Memory optimizations
         if hasattr(self.pipe, 'enable_attention_slicing'):
             self.pipe.enable_attention_slicing(1)
         if hasattr(self.pipe, 'enable_vae_slicing'):
@@ -222,7 +200,7 @@ class QwenModel:
         except:
             pass
         
-        print("✓ Model Qwen Image Edit berhasil dimuat (DI GPU - OPTIMIZED)")
+        print("✓ Model Qwen Image Edit berhasil dimuat (DI GPU)")
     
     def _validate_steps(self, steps: int) -> int:
         return max(MIN_STEPS, min(steps, MAX_STEPS))
@@ -250,7 +228,6 @@ class QwenModel:
             init_image_bytes = base64.b64decode(init_image_b64)
             init_image = Image.open(io.BytesIO(init_image_bytes)).convert("RGB")
             
-            # Resize jika terlalu besar
             w, h = init_image.size
             if w > MAX_IMAGE_SIZE or h > MAX_IMAGE_SIZE:
                 ratio = min(MAX_IMAGE_SIZE/w, MAX_IMAGE_SIZE/h)
@@ -261,7 +238,6 @@ class QwenModel:
             
             generator = torch.Generator(device=self.device).manual_seed(seed) if seed != -1 else None
             
-            # OPTIMASI: No CPU/GPU switching, langsung inference
             with torch.inference_mode():
                 image = self.pipe(
                     image=init_image,
@@ -273,7 +249,6 @@ class QwenModel:
                     strength=strength
                 ).images[0]
             
-            # Cleanup after inference
             del generator
             torch.cuda.empty_cache()
             gc.collect()
@@ -300,15 +275,11 @@ class QwenModel:
                 "error": str(e)
             }
 
-# ============================================================================
-# FASTAPI - TETAP ENDPOINT ORIGINAL LO: /text2img dan /img2img
-# ============================================================================
-
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("custom-secret")]
+    secrets=[modal.Secret.from_name("custom-secret")],
+    max_inputs=100
 )
-  # OPTIMASI: Gateway bisa handle 100 concurrent
 @modal.asgi_app()
 def fastapi_app():
     from fastapi import FastAPI, HTTPException, Request
@@ -317,7 +288,6 @@ def fastapi_app():
     
     web_app = FastAPI()
     
-    # CORS
     web_app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -345,7 +315,7 @@ def fastapi_app():
     async def health_check():
         return { "status": "healthy" }
 
-    @web_app.post("/text2img")  # TETAP ENDPOINT LO
+    @web_app.post("/text2img")
     async def text_to_image_endpoint(request: Request):
         try:
             data = await request.json()
@@ -368,7 +338,6 @@ def fastapi_app():
                 "enhance_prompt": data.get("enhance_prompt", True)
             }
 
-            # OPTIMASI: Panggil SD3 dedicated container
             model = SD35Model()
             result = model.generate.remote(**kwargs)
             return JSONResponse(content=result)
@@ -377,7 +346,7 @@ def fastapi_app():
             print(f"Error processing request: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    @web_app.post("/img2img")  # TETAP ENDPOINT LO
+    @web_app.post("/img2img")
     async def image_to_image_endpoint(request: Request):
         try:
             data = await request.json()
@@ -404,7 +373,6 @@ def fastapi_app():
                 "enhance_prompt": data.get("enhance_prompt", True)
             }
             
-            # OPTIMASI: Panggil Qwen dedicated container
             model = QwenModel()
             result = model.edit.remote(**kwargs)
             return JSONResponse(content=result)
