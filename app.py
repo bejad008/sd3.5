@@ -58,8 +58,9 @@ CACHE_DIR = "/model_cache"
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800
+    max_inputs=10
 )
-@modal.concurrent(10)  # OPTIMASI: 10 concurrent per container
+  # OPTIMASI: 10 concurrent per container
 class SD35Model:
     """Dedicated container untuk SD3.5 - LANGSUNG DI GPU, NO SWITCHING"""
     
@@ -183,8 +184,9 @@ class SD35Model:
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800
+    max_inputs=10
 )
-@modal.concurrent(10)  # OPTIMASI: 10 concurrent per container
+  # OPTIMASI: 10 concurrent per container
 class QwenModel:
     """Dedicated container untuk Qwen - LANGSUNG DI GPU, NO SWITCHING"""
     
@@ -306,7 +308,7 @@ class QwenModel:
     image=image,
     secrets=[modal.Secret.from_name("custom-secret")]
 )
-@modal.concurrent(100)  # OPTIMASI: Gateway bisa handle 100 concurrent
+@modal.concurrent(max_inputs=100)  # OPTIMASI: Gateway bisa handle 100 concurrent
 @modal.asgi_app()
 def fastapi_app():
     from fastapi import FastAPI, HTTPException, Request
