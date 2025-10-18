@@ -173,14 +173,13 @@ class QwenModel:
     @modal.enter()
     def load_model(self):
         import torch
-        from diffusers import AutoPipelineForImage2Image
-
+        from diffusers import QwenImageEditPlusPipeline
         os.makedirs(CACHE_DIR, exist_ok=True)
         self.device = "cuda"
         
         print("Memuat model Qwen Image Edit...")
-        model_id_qwen = "Qwen/Qwen-Image-Edit"
-        self.pipe = AutoPipelineForImage2Image.from_pretrained(
+        model_id_qwen = "Qwen/Qwen-Image-Edit-2509"
+        self.pipe = QwenImageEditPlusPipeline.from_pretrained(  # <-- GANTI KE SINI
             model_id_qwen,
             torch_dtype=torch.bfloat16,
             cache_dir=CACHE_DIR,
