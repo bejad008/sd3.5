@@ -47,7 +47,7 @@ image = (
         "diffusers",
         "transformers",
         "accelerate",
-        "safensors",
+        "safetensors",
         "Pillow",
         "requests",
         "invisible-watermark", 
