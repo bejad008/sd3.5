@@ -37,10 +37,9 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 image = (
     modal.Image.debian_slim(python_version="3.11")
     
-    # --- PERBAIKAN: Menambahkan dependency sistem libGL.so.1 ---
-    .apt_install("libgl1-mesa-glx") 
-    # -----------------------------------------------------------
-    
+    # --- PERBAIKAN: Menambahkan dependency sistem libGL.so.1 & libgthread-2.0.so.0 ---
+    .apt_install("libgl1-mesa-glx", "libglib2.0-0") 
+    # -----------------------------------------------------------------------------
     .pip_install(
         "fastapi[standard]",
         "torch",
