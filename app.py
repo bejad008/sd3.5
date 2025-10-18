@@ -33,6 +33,7 @@ image = (
         "safetensors",
         "Pillow",
         "sentencepiece",
+        "torchvision",
     )
 )
 
