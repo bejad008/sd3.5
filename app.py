@@ -1,14 +1,14 @@
 """
 Deploy Model CivitAI ke Modal.com dengan FastAPI
 Features: Text-to-Image, Image-to-Image, Uncensored
-VERSI 4.0 - Dengan VAE + Refiner + Perbaikan Bug
+VERSI 4.1 - L4, Seed 5, Steps 30
 """
 
-import modal # --- PERBAIKAN 1: Menambahkan import modal ---
+import modal 
 import io
 import base64
 import os
-import warnings # --- PERBAIKAN 2: Import warnings di atas ---
+import warnings 
 from pathlib import Path
 
 # Inisialisasi Modal app
@@ -45,16 +45,15 @@ image = (
         "safetensors",
         "Pillow",
         "requests",
-        "invisible-watermark", # --- PERBAIKAN 3: Dependensi SDXL ---
+        "invisible-watermark", 
     )
 )
 
 # Volume untuk menyimpan model
-# --- PERBAIKAN 4: Ganti nama volume agar lebih spesifik ---
 model_volume = modal.Volume.from_name("sdxl-juggernaut-refiner-cache", create_if_missing=True)
 MODEL_DIR = "/models"
 
-# --- PERBAIKAN 5: Definisikan semua URL dan Path Model ---
+# Definisikan semua URL dan Path Model
 # 1. Base Model (Juggernaut v9)
 BASE_MODEL_URL = "https://civitai.com/api/download/models/257749" # Ini Juggernaut v9
 BASE_MODEL_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors"
@@ -77,7 +76,6 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
     
     local_path = Path(local_path)
     
-    # Cek apakah file valid sudah ada
     if local_path.exists() and not force:
         try:
             file_size = local_path.stat().st_size
@@ -92,9 +90,8 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
             try:
                 local_path.unlink()
             except:
-                pass # Gagal menghapus tidak masalah
+                pass 
     
-    # Download file jika tidak ada atau korup
     print(f"Mengunduh {local_path.name} dari {url}...")
     try:
         with requests.get(url, stream=True) as r:
@@ -103,7 +100,6 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
         
-        # Verifikasi ulang setelah download
         if local_path.stat().st_size < min_size:
             print(f"!!! Download Gagal. File {local_path.name} masih terlalu kecil.")
             local_path.unlink()
@@ -113,7 +109,6 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
         
     except Exception as e:
         print(f"!!! Gagal mengunduh {local_path.name}: {e}")
-        # Hapus file parsial jika download gagal
         if local_path.exists():
             local_path.unlink()
         raise
@@ -128,28 +123,24 @@ def download_models():
     """Download Base, Refiner, dan VAE"""
     os.makedirs(MODEL_DIR, exist_ok=True)
     
-    # Download Base
     _download_file(
         BASE_MODEL_URL,
         Path(MODEL_DIR) / BASE_MODEL_FILENAME,
         BASE_MIN_SIZE_BYTES
     )
     
-    # Download Refiner
     _download_file(
         REFINER_MODEL_URL,
         Path(MODEL_DIR) / REFINER_MODEL_FILENAME,
         REFINER_MIN_SIZE_BYTES
     )
     
-    # Download VAE
     _download_file(
         VAE_MODEL_URL,
         Path(MODEL_DIR) / VAE_MODEL_FILENAME,
         VAE_MIN_SIZE_BYTES
     )
     
-    # Commit semua file ke volume
     model_volume.commit()
     print("✓ Semua model (Base, Refiner, VAE) telah diunduh.")
     return True
@@ -158,35 +149,31 @@ def download_models():
 # Class untuk inference
 @app.cls(
     image=image,
-    gpu="T4",
+    gpu="L4", # --- PERUBAHAN 1: GPU diubah ke L4 ---
     volumes={MODEL_DIR: model_volume},
-    container_idle_timeout=200
+    scaledown_window=200 # --- PERUBAHAN 2: container_idle_timeout diubah ke scaledown_window ---
 )
 class ModelInference:
     @modal.enter()
     def load_model(self):
         """Load model saat container start"""
-        # --- PERBAIKAN 6: Menggunakan alur kerja VAE + Base + Refiner ---
         from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline, AutoencoderKL
         import torch
         
-        # Definisikan paths
         base_model_path = f"{MODEL_DIR}/{BASE_MODEL_FILENAME}"
         refiner_model_path = f"{MODEL_DIR}/{REFINER_MODEL_FILENAME}"
         vae_model_path = f"{MODEL_DIR}/{VAE_MODEL_FILENAME}"
 
         print("Memuat VAE...")
-        # 1. Muat VAE
         self.vae = AutoencoderKL.from_single_file(
             vae_model_path,
             torch_dtype=torch.float16
         )
         
         print("Memuat Base Model (Juggernaut)...")
-        # 2. Muat Base Pipeline (Juggernaut) dan masukkan VAE
         self.base_pipe = StableDiffusionXLPipeline.from_single_file(
             base_model_path,
-            vae=self.vae, # Masukkan VAE kustom
+            vae=self.vae, 
             torch_dtype=torch.float16,
             use_safetensors=True,
             variant="fp16"
@@ -194,10 +181,9 @@ class ModelInference:
         self.base_pipe.to("cuda")
         
         print("Memuat Refiner Model...")
-        # 3. Muat Refiner Pipeline dan masukkan VAE
         self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(
             refiner_model_path,
-            vae=self.vae, # Masukkan VAE kustom
+            vae=self.vae, 
             text_encoder_2=self.base_pipe.text_encoder_2,
             tokenizer_2=self.base_pipe.tokenizer_2,
             torch_dtype=torch.float16,
@@ -213,7 +199,7 @@ class ModelInference:
         self, 
         prompt: str, 
         negative_prompt: str = "", 
-        num_steps: int = 30, 
+        num_steps: int = 30, # --- PERUBAHAN 3: Default steps diubah ke 30 ---
         guidance_scale: float = 7.5,
         width: int = 1024,
         height: int = 1024,
@@ -225,7 +211,6 @@ class ModelInference:
         import base64
         import torch
         
-        # Setup prompt
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
         
@@ -235,32 +220,28 @@ class ModelInference:
         if seed != -1:
             generator = torch.Generator(device="cuda").manual_seed(seed)
         
-        # --- PERBAIKAN 7: Alur kerja 2 tahap (Base -> Refiner) ---
-        # Tentukan titik pemisah (80% Base, 20% Refiner)
         high_noise_frac = 0.8
         
-        # 1. Jalankan Base pipe untuk 80%
         image_latents = self.base_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
-            num_inference_steps=num_steps,
+            num_inference_steps=num_steps, # Menggunakan num_steps
             guidance_scale=guidance_scale,
             width=width,
             height=height,
             generator=generator,
-            output_type="latent", # Output dalam bentuk latent
-            denoising_end=high_noise_frac # Berhenti di 80%
+            output_type="latent", 
+            denoising_end=high_noise_frac 
         ).images
 
-        # 2. Jalankan Refiner pipe untuk 20% terakhir
         image = self.refiner_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
-            num_inference_steps=num_steps,
+            num_inference_steps=num_steps, # Menggunakan num_steps
             guidance_scale=guidance_scale,
             generator=generator,
-            image=image_latents, # Masukkan latent dari Base
-            denoising_start=high_noise_frac # Mulai dari 80%
+            image=image_latents, 
+            denoising_start=high_noise_frac 
         ).images[0]
         
         buffered = io.BytesIO()
@@ -283,7 +264,7 @@ class ModelInference:
         init_image_b64: str,
         prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 25,
+        num_steps: int = 30, # --- PERUBAHAN 4: Default steps diubah ke 30 ---
         guidance_scale: float = 7.5,
         strength: float = 0.75,
         seed: int = -1,
@@ -295,7 +276,6 @@ class ModelInference:
         from PIL import Image
         import torch
         
-        # Setup prompt
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
         
@@ -308,15 +288,12 @@ class ModelInference:
         if seed != -1:
             generator = torch.Generator(device="cuda").manual_seed(seed)
         
-        # --- PERBAIKAN 8: Menggunakan Base Pipe untuk Img2Img ---
-        # Alur kerja Refiner untuk img2img lebih kompleks,
-        # menggunakan Base Pipe saja sudah sangat bagus dan cepat.
         image = self.base_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
             image=init_image,
             strength=strength,
-            num_inference_steps=num_steps,
+            num_inference_steps=num_steps, # Menggunakan num_steps
             guidance_scale=guidance_scale,
             generator=generator
         ).images[0]
@@ -333,7 +310,7 @@ class ModelInference:
             "strength": strength,
             "seed": seed if seed != -1 else "random",
             "uncensored": True,
-            "workflow": "Base Only" # Tandai bahwa ini tidak pakai refiner
+            "workflow": "Base Only" 
         }
 
 @app.function(
@@ -352,25 +329,15 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "4.0", # Versi diperbarui
+            "version": "4.1", # Versi diperbarui
+            "gpu": "L4",
+            "default_steps": 30,
+            "default_i2i_seed": 5,
             "endpoints": {
                 "health": "GET /health",
                 "text-to-image": "POST /text2img",
                 "image-to-image": "POST /img2img"
             },
-            "features": [
-                "✓ No NSFW filter", 
-                "✓ Uncensored generation",
-                "✓ Text-to-Image (Base + Refiner)", # Diperbarui
-                "✓ Image-to-Image (Base Only)", # Diperbarui
-                "✓ Kualitas VAE kustom (Anti-pucat)", # Baru
-                "✓ Auto quality enhancement",
-                "✓ Default negative prompts for best results"
-            ],
-            "default_prompts": {
-                "positive_suffix": DEFAULT_POSITIVE_PROMPT_SUFFIX,
-                "negative": DEFAULT_NEGATIVE_PROMPT
-            }
         }
 
     @web_app.get("/health")
@@ -378,7 +345,7 @@ def fastapi_app():
         return {
             "status": "healthy", 
             "service": "civitai-model-api",
-            "mode": "uncensored-sdxl-base-refiner" # Diperbarui
+            "mode": "uncensored-sdxl-base-refiner" 
         }
 
     @web_app.post("/text2img")
@@ -398,7 +365,7 @@ def fastapi_app():
             
             kwargs = {
                 "prompt": prompt,
-                "num_steps": data.get("num_steps", 25),
+                "num_steps": data.get("num_steps", 30), # --- PERUBAHAN 5: Default steps diubah ke 30 ---
                 "guidance_scale": data.get("guidance_scale", 7.5),
                 "width": data.get("width", 1024),
                 "height": data.get("height", 1024),
@@ -423,8 +390,7 @@ def fastapi_app():
         try:
             data = await request.json()
             
-            # --- PERBAIKAN 9: Bug API Key diperbaiki ---
-            api_key = data.get("api_key") # Sebelumnya: data.get("custom-secret")
+            api_key = data.get("api_key") 
             expected_key = os.environ.get("API_KEY")
             
             if api_key != expected_key:
@@ -441,10 +407,10 @@ def fastapi_app():
             kwargs = {
                 "init_image_b64": init_image,
                 "prompt": prompt,
-                "num_steps": data.get("num_steps", 25),
+                "num_steps": data.get("num_steps", 30), # --- PERUBAHAN 6: Default steps diubah ke 30 ---
                 "guidance_scale": data.get("guidance_scale", 7.5),
                 "strength": data.get("strength", 0.75),
-                "seed": data.get("seed", -1),
+                "seed": data.get("seed", 5), # --- PERUBAHAN 7: Default seed diubah ke 5 ---
                 "enhance_prompt": data.get("enhance_prompt", True)
             }
             
