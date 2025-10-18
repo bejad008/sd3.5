@@ -251,11 +251,11 @@ class ModelInference:
         self, 
         prompt: str, 
         negative_prompt: str = "", 
-        num_steps: int = 30, 
-        guidance_scale: float = 7.5,
+        num_steps: int = 40, 
+        guidance_scale: float = 9,
         width: int = 1024,
         height: int = 1024,
-        seed: int = -1,
+        seed: int = 5,
         enhance_prompt: bool = True
     ):
         """Generate image dari text prompt"""
@@ -316,10 +316,10 @@ class ModelInference:
         init_image_b64: str,
         prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 30, 
-        guidance_scale: float = 7.5,
+        num_steps: int = 40, 
+        guidance_scale: float = 9,
         strength: float = 0.75,
-        seed: int = -1,
+        seed: int = 5,
         enhance_prompt: bool = True
     ):
         """Edit image dengan prompt"""
