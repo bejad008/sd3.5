@@ -90,9 +90,9 @@ def download_model():
 # Class untuk inference
 @app.cls(
     image=image,
-    gpu="T4",
+    gpu="L4",
     volumes={MODEL_DIR: model_volume},
-    container_idle_timeout=200
+    scaledown_window=200
 )
 class ModelInference:
     @modal.enter()
@@ -190,7 +190,7 @@ class ModelInference:
         init_image_b64: str,
         prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 25,
+        num_steps: int = 35,
         guidance_scale: float = 7.5,
         strength: float = 0.75,
         seed: int = -1,
