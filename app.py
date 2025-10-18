@@ -2,9 +2,9 @@ import modal
 import io
 import base64
 import os
-import warnings
+from pathlib import Path
 
-app = modal.App("civitai-api-fastapi")
+app = modal.App("civitai-api-fastapi-v2")
 
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
@@ -19,23 +19,19 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
     "masterpiece, best quality, 8k, photorealistic, intricate details, professional photo"
 )
 
-# --- PERUBAHAN DI SINI ---
-# Menambahkan library yang dibutuhkan oleh Qwen
+# Install diffusers versi terbaru langsung dari github
+# untuk memastikan QwenImageEditPipeline ada.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "fastapi[standard]",
         "torch",
-        "diffusers",
+        "git+https://github.com/huggingface/diffusers.git", # Wajib untuk Qwen
         "transformers",
         "accelerate",
         "safetensors",
         "Pillow",
-        "bitsandbytes",  # Dibutuhkan untuk load_in_4bit=True
         "sentencepiece",
-        "qwen-vl-chat",  # Baru untuk Qwen
-        "tiktoken",      # Baru untuk Qwen
-        "einops",        # Baru untuk Qwen
     )
 )
 
@@ -44,10 +40,10 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L40S",  # L40S punya 48GB VRAM, cukup untuk dua model
+    gpu="L40S", # GPU besar untuk 2 model
     secrets=[
-        modal.Secret.from_name("huggingface-secret"),
-        modal.Secret.from_name("custom-secret")
+        modal.Secret.from_name("huggingface-secret"), # Butuh HF_TOKEN
+        modal.Secret.from_name("custom-secret")      # Butuh API_KEY
     ],
     volumes={CACHE_DIR: model_cache},
     container_idle_timeout=300,
@@ -57,49 +53,34 @@ class ModelInference:
     @modal.enter()
     def load_model(self):
         import torch
-        from diffusers import StableDiffusion3Pipeline
-        # --- PERUBAHAN DI SINI ---
-        # Import model dan processor Qwen
-        from qwen_vl_chat.qwen_model import Qwen2ForInstructImageEdit
-        from qwen_vl_chat.qwen_processor import QwenVLProcessor
+        from diffusers import StableDiffusion3Pipeline, QwenImageEditPipeline
 
         os.makedirs(CACHE_DIR, exist_ok=True)
         
         # 1. Load Model SD 3.5 (untuk Text-to-Image)
         print("Memuat model Stable Diffusion 3.5 Large...")
         model_id_sd3 = "stabilityai/stable-diffusion-3.5-large"
-        self.pipe = StableDiffusion3Pipeline.from_pretrained(
+        self.sd3_pipe = StableDiffusion3Pipeline.from_pretrained(
             model_id_sd3,
             torch_dtype=torch.float16,
             use_auth_token=os.environ["HF_TOKEN"],
             cache_dir=CACHE_DIR
         )
-        self.pipe.to("cuda")
+        self.sd3_pipe.to("cuda")
         print("✓ Model SD 3.5 Large berhasil dimuat!")
 
-        # --- PERUBAHAN DI SINI ---
         # 2. Load Model Qwen (untuk Image-to-Image)
         print("Memuat model Qwen Image Edit...")
-        model_id_qwen = "Qwen/Qwen-Image-Edit"
-        
-        # Kita pakai 4-bit agar muat di VRAM bersama SD3
-        self.qwen_model = Qwen2ForInstructImageEdit.from_pretrained(
+        model_id_qwen = "Qwen/Qwen-Image-Edit" # Sesuai permintaan
+        self.qwen_pipe = QwenImageEditPipeline.from_pretrained(
             model_id_qwen,
-            torch_dtype=torch.bfloat16,  # bfloat16 direkomendasikan untuk 4-bit
-            trust_remote_code=True,
-            load_in_4bit=True,
+            torch_dtype=torch.bfloat16, # bfloat16 direkomendasikan
             cache_dir=CACHE_DIR,
             use_auth_token=os.environ["HF_TOKEN"],
         )
-        
-        # Processor untuk Qwen
-        self.qwen_processor = QwenVLProcessor.from_pretrained(
-            "Qwen/Qwen-VL-Chat", # Menggunakan processor dari Qwen-VL-Chat
-            trust_remote_code=True,
-            cache_dir=CACHE_DIR,
-            use_auth_token=os.environ["HF_TOKEN"],
-        )
+        self.qwen_pipe.to("cuda")
         print("✓ Model Qwen Image Edit berhasil dimuat!")
+
 
     @modal.method()
     def text_to_image(
@@ -113,18 +94,15 @@ class ModelInference:
         seed: int = -1,
         enhance_prompt: bool = True
     ):
-        # Fungsi ini tidak berubah, tetap menggunakan SD 3.5
         import torch
         
-        warnings.filterwarnings("ignore", message=".*CLIP can only handle sequences up to 77 tokens.*")
-
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
 
         print(f"Text-to-Image (SD3.5): {enhanced_prompt[:100]}...")
         generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
 
-        image = self.pipe(
+        image = self.sd3_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
             num_inference_steps=num_steps,
@@ -146,53 +124,50 @@ class ModelInference:
             "seed": seed if seed != -1 else "random",
         }
     
-    # --- PERUBAHAN TOTAL DI FUNGSI INI ---
     @modal.method()
     def image_to_image(
         self,
         init_image_b64: str,
-        prompt: str,  # Ini sekarang adalah INSTRUKSI (cth: "make his hat blue")
-        negative_prompt: str = "", # Diabaikan oleh Qwen
-        num_steps: int = 28,       # Diabaikan oleh Qwen
-        guidance_scale: float = 4.5, # Diabaikan oleh Qwen
-        strength: float = 0.75,      # Diabaikan oleh Qwen
-        seed: int = -1,              # Diabaikan oleh Qwen
-        enhance_prompt: bool = True  # Diabaikan oleh Qwen
+        prompt: str,  # Ini adalah INSTRUKSI (cth: "make his hat blue")
+        negative_prompt: str = "",
+        num_steps: int = 50,         # Qwen pakai 50 di doc
+        guidance_scale: float = 4.0, # Qwen pakai true_cfg_scale=4.0 di doc
+        strength: float = 0.75,      # Diabaikan
+        seed: int = -1,
+        enhance_prompt: bool = True  # Diabaikan
     ):
         from PIL import Image
+        import torch
         
-        # Qwen tidak pakai parameter2 ini, tapi kita biarkan di signature
-        # agar endpoint FastAPI tidak error.
         print(f"Image-to-Image (Qwen): {prompt[:100]}...")
-        print("  (Note: num_steps, guidance_scale, strength, seed, enhance_prompt diabaikan)")
         
         init_image_bytes = base64.b64decode(init_image_b64)
         init_image = Image.open(io.BytesIO(init_image_bytes)).convert("RGB")
         
-        # Buat query/prompt untuk Qwen
-        # Qwen tidak menggunakan negative prompt
-        query = self.qwen_processor.build_image_chat_input(
-            query=prompt,
-            image_list=[init_image]
-        )
+        generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
         
-        # Jalankan model edit Qwen
-        edited_image, _ = self.qwen_model.edit(
-            query=query,
-            mm_image_list=[init_image]
-        )
+        # Qwen pakai parameter yang beda.
+        image = self.qwen_pipe(
+            image=init_image,
+            prompt=prompt,
+            # Qwen rekomendasi " " jika tidak ada negative prompt
+            negative_prompt=negative_prompt.strip() or " ", 
+            generator=generator,
+            true_cfg_scale=guidance_scale, # Ini parameter Qwen yg bener
+            num_inference_steps=num_steps  # Qwen butuh steps lebih banyak
+        ).images[0]
         
         buffered = io.BytesIO()
-        edited_image.save(buffered, format="PNG")
+        image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
         
         return {
             "image": img_str,
             "prompt": prompt, # Prompt di sini adalah instruksi edit
             "original_prompt": prompt,
-            "negative_prompt": "N/A (Qwen Model)",
+            "negative_prompt": negative_prompt.strip() or " ",
             "strength": "N/A (Qwen Model)",
-            "seed": "N/A (Qwen Model)",
+            "seed": seed if seed != -1 else "random",
         }
 
 @app.function(
@@ -210,7 +185,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "Multi-Model API",
-            "version": "2.0 (SD3.5 + Qwen-Edit)",
+            "version": "2.1 (SD3.5 + Qwen-Edit)",
             "endpoints": {
                 "health": "GET /health",
                 "text-to-image": "POST /text2img (Stable Diffusion 3.5)",
@@ -222,7 +197,6 @@ def fastapi_app():
     async def health_check():
         return { "status": "healthy" }
 
-    # Endpoint ini tidak berubah, tetap memanggil text_to_image
     @web_app.post("/text2img")
     async def text_to_image_endpoint(request: Request):
         try:
@@ -254,8 +228,6 @@ def fastapi_app():
             print(f"Error processing request: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    # Endpoint ini tidak berubah, tetap memanggil image_to_image
-    # (Meskipun logic di dalamnya sudah ganti ke Qwen)
     @web_app.post("/img2img")
     async def image_to_image_endpoint(request: Request):
         try:
@@ -276,11 +248,11 @@ def fastapi_app():
                 "init_image_b64": init_image,
                 "prompt": prompt,
                 "negative_prompt": data.get("negative_prompt", ""),
-                "num_steps": data.get("num_steps", 28),
-                "guidance_scale": data.get("guidance_scale", 4.5),
-                "strength": data.get("strength", 0.75),
+                "num_steps": data.get("num_steps", 50),     # Default Qwen
+                "guidance_scale": data.get("guidance_scale", 4.0), # Default Qwen
+                "strength": data.get("strength", 0.75),      # Diabaikan
                 "seed": data.get("seed", -1),
-                "enhance_prompt": data.get("enhance_prompt", True)
+                "enhance_prompt": data.get("enhance_prompt", True) # Diabaikan
             }
             
             model = ModelInference()
@@ -296,4 +268,4 @@ def fastapi_app():
 @app.local_entrypoint()
 def main():
     print("Aplikasi siap untuk di-deploy ke Modal dengan perintah:")
-    print("modal deploy app.py") # Ganti nama file jika perlu
+    print("modal deploy app.py")
