@@ -47,12 +47,12 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L4:4",
+    gpu="L4",
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
-    concurrency_limit=10
+    max_containers=10
 )
 class SD35Model:
     
@@ -161,12 +161,12 @@ class SD35Model:
 
 @app.cls(
     image=image,
-    gpu="L40S",
+    gpu="L4:4",
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
-    concurrency_limit=10
+    max_containers=10
 )
 class QwenModel:
     
@@ -277,7 +277,7 @@ class QwenModel:
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("custom-secret")],
-    concurrency_limit=100
+    max_containers=100
 )
 @modal.asgi_app()
 def fastapi_app():
