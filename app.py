@@ -2,13 +2,10 @@ import modal
 import io
 import base64
 import os
-import warnings 
 from pathlib import Path
 
-# Inisialisasi Modal app
 app = modal.App("civitai-api-fastapi")
 
-# Default prompts (sudah bagus)
 DEFAULT_NEGATIVE_PROMPT = (
     "nsfw, nude, naked, porn, sex, sexual, explicit, uncensored, "
     "ass, breasts, nipple, pussy, genitalia, "
@@ -27,47 +24,37 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
     "(full body shot)"
 )
 
-# Definisikan image dengan dependencies
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    
-    # --- PERBAIKAN: Menambahkan dependency sistem libGL.so.1 & libgthread-2.0.so.0 ---
-    .apt_install("libgl1-mesa-glx", "libglib2.0-0") 
-    # -----------------------------------------------------------------------------
+    .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6") 
     .pip_install(
         "fastapi[standard]",
-        "torch",
-        "diffusers",
-        "transformers",
-        "accelerate",
-        "safetensors",
-        "Pillow",
-        "requests",
-        "invisible-watermark", 
+        "torch==2.1.0",
+        "diffusers==0.24.0",
+        "transformers==4.35.2",
+        "accelerate==0.25.0",
+        "safetensors==0.4.1",
+        "Pillow==10.1.0",
+        "requests==2.31.0",
+        "invisible-watermark==0.2.0",
     )
 )
 
-# Volume untuk menyimpan model
 model_volume = modal.Volume.from_name("sdxl-juggernaut-refiner-cache", create_if_missing=True)
 MODEL_DIR = "/models"
 
-# Definisikan semua URL dan Path Model
-# 1. Base Model (Juggernaut v9)
-BASE_MODEL_URL = "https://civitai.com/api/download/models/257749" # Ini Juggernaut v9
+BASE_MODEL_URL = "https://civitai.com/api/download/models/257749"
 BASE_MODEL_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors"
-BASE_MIN_SIZE_BYTES = 6_000_000_000 # 6GB
+BASE_MIN_SIZE_BYTES = 6_000_000_000
 
-# 2. Refiner Model (Resmi SDXL)
 REFINER_MODEL_URL = "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/diffusion_pytorch_model.safetensors"
 REFINER_MODEL_FILENAME = "sdxl_refiner_1.0.safetensors"
-REFINER_MIN_SIZE_BYTES = 5_000_000_000 # 5GB
+REFINER_MIN_SIZE_BYTES = 5_000_000_000
 
-# 3. VAE Model (Resmi SDXL)
 VAE_MODEL_URL = "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/diffusion_pytorch_model.safetensors"
 VAE_MODEL_FILENAME = "sdxl_vae.safetensors"
-VAE_MIN_SIZE_BYTES = 300_000_000 # 300MB
+VAE_MIN_SIZE_BYTES = 300_000_000
 
-# Fungsi helper untuk download
 def _download_file(url: str, local_path: Path, min_size: int, force: bool = False):
     """Fungsi download yang robust dengan pengecekan ukuran file."""
     import requests
@@ -92,11 +79,18 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
     
     print(f"Mengunduh {local_path.name} dari {url}...")
     try:
-        with requests.get(url, stream=True) as r:
+        with requests.get(url, stream=True, timeout=300) as r:
             r.raise_for_status()
+            total = int(r.headers.get('content-length', 0))
+            downloaded = 0
             with open(local_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                for chunk in r.iter_content(chunk_size=1048576):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = (downloaded / total) * 100
+                            print(f"  {pct:.1f}% ({downloaded/1e9:.2f}GB / {total/1e9:.2f}GB)")
         
         if local_path.stat().st_size < min_size:
             print(f"!!! Download Gagal. File {local_path.name} masih terlalu kecil.")
@@ -111,15 +105,18 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
             local_path.unlink()
         raise
 
-# Download model (jalankan sekali saat build)
 @app.function(
     image=image,
     volumes={MODEL_DIR: model_volume},
-    timeout=3600
+    timeout=7200
 )
 def download_models():
     """Download Base, Refiner, dan VAE"""
     os.makedirs(MODEL_DIR, exist_ok=True)
+    
+    print("=" * 60)
+    print("MEMULAI DOWNLOAD MODEL")
+    print("=" * 60)
     
     _download_file(
         BASE_MODEL_URL,
@@ -140,11 +137,12 @@ def download_models():
     )
     
     model_volume.commit()
-    print("✓ Semua model (Base, Refiner, VAE) telah diunduh.")
+    print("=" * 60)
+    print("✓ SEMUA MODEL BERHASIL DIUNDUH")
+    print("=" * 60)
     return True
 
 
-# Class untuk inference
 @app.cls(
     image=image,
     gpu="L4", 
@@ -155,42 +153,52 @@ class ModelInference:
     @modal.enter()
     def load_model(self):
         """Load model saat container start"""
-        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline, AutoencoderKL
+        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
+        from safetensors.torch import load_file
         import torch
         
         base_model_path = f"{MODEL_DIR}/{BASE_MODEL_FILENAME}"
         refiner_model_path = f"{MODEL_DIR}/{REFINER_MODEL_FILENAME}"
         vae_model_path = f"{MODEL_DIR}/{VAE_MODEL_FILENAME}"
 
-        print("Memuat VAE...")
-        self.vae = AutoencoderKL.from_single_file(
-            vae_model_path,
-            torch_dtype=torch.float16
-        )
+        print("\n" + "=" * 60)
+        print("MEMUAT MODEL INFERENCE")
+        print("=" * 60)
         
-        print("Memuat Base Model (Juggernaut)...")
-        self.base_pipe = StableDiffusionXLPipeline.from_single_file(
-            base_model_path,
-            vae=self.vae, 
-            torch_dtype=torch.float16,
-            use_safetensors=True
-        )
-        self.base_pipe.to("cuda")
-        self.base_pipe.enable_attention_slicing()
-        
-        print("Memuat Refiner Model...")
-        self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(
-            refiner_model_path,
-            vae=self.vae, 
-            text_encoder_2=self.base_pipe.text_encoder_2,
-            tokenizer_2=self.base_pipe.tokenizer_2,
-            torch_dtype=torch.float16,
-            use_safetensors=True
-        )
-        self.refiner_pipe.to("cuda")
-        self.refiner_pipe.enable_attention_slicing()
-        
-        print("✓ Model Base + Refiner + VAE berhasil dimuat! Uncensored mode active.")
+        try:
+            print("\n[1/2] Memuat Base Model (Juggernaut)...")
+            self.base_pipe = StableDiffusionXLPipeline.from_single_file(
+                base_model_path,
+                torch_dtype=torch.float16,
+                use_safetensors=True
+            )
+            self.base_pipe.to("cuda")
+            self.base_pipe.enable_attention_slicing()
+            self.base_pipe.enable_vae_tiling()
+            print("✓ Base Model berhasil dimuat")
+            
+            print("\n[2/2] Memuat Refiner Model...")
+            self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(
+                refiner_model_path,
+                text_encoder_2=self.base_pipe.text_encoder_2,
+                tokenizer_2=self.base_pipe.tokenizer_2,
+                vae=self.base_pipe.vae,
+                torch_dtype=torch.float16,
+                use_safetensors=True
+            )
+            self.refiner_pipe.to("cuda")
+            self.refiner_pipe.enable_attention_slicing()
+            self.refiner_pipe.enable_vae_tiling()
+            print("✓ Refiner Model berhasil dimuat")
+            
+            print("\n" + "=" * 60)
+            print("✓ SEMUA MODEL BERHASIL DIMUAT - UNCENSORED MODE ACTIVE")
+            print("=" * 60 + "\n")
+            
+        except Exception as e:
+            print(f"\n!!! ERROR: {str(e)}")
+            print("=" * 60)
+            raise
     
     @modal.method()
     def text_to_image(
@@ -204,15 +212,13 @@ class ModelInference:
         seed: int = -1,
         enhance_prompt: bool = True
     ):
-        """Generate image dari text prompt menggunakan alur kerja Base + Refiner"""
-        import io
-        import base64
+        """Generate image dari text prompt"""
         import torch
         
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
         
-        print(f"Text-to-Image (Base+Refiner): {enhanced_prompt[:100]}...")
+        print(f"\n[T2I] Prompt: {enhanced_prompt[:100]}...")
         
         generator = None
         if seed != -1:
@@ -220,6 +226,7 @@ class ModelInference:
         
         high_noise_frac = 0.8
         
+        print(f"[Base] Generating latents (noise_frac={high_noise_frac})...")
         image_latents = self.base_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
@@ -232,6 +239,7 @@ class ModelInference:
             denoising_end=high_noise_frac 
         ).images
 
+        print(f"[Refiner] Refining output...")
         image = self.refiner_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
@@ -268,16 +276,14 @@ class ModelInference:
         seed: int = -1,
         enhance_prompt: bool = True
     ):
-        """Edit image dengan prompt (Hanya menggunakan Base untuk img2img)"""
-        import io
-        import base64
+        """Edit image dengan prompt"""
         from PIL import Image
         import torch
         
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
         
-        print(f"Image-to-Image (Base Only): {enhanced_prompt[:100]}...")
+        print(f"\n[I2I] Prompt: {enhanced_prompt[:100]}...")
         
         init_image_bytes = base64.b64decode(init_image_b64)
         init_image = Image.open(io.BytesIO(init_image_bytes)).convert("RGB")
@@ -327,7 +333,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "4.3",
+            "version": "5.0",
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
@@ -428,12 +434,5 @@ def fastapi_app():
 
 @app.local_entrypoint()
 def main():
-    """
-    Jalankan perintah ini di terminal Anda untuk men-deploy:
-    modal deploy modal_app.py
-    
-    Atau untuk men-deploy builder (download model) saja:
-    modal run modal_app.py::download_models
-    """
-    print("Menjalankan local entrypoint (tidak melakukan apa-apa).")
-    print("Untuk men-deploy, jalankan: modal deploy modal_app.py")
+    print("Untuk men-deploy: modal deploy modal_app.py")
+    print("Untuk download model: modal run modal_app.py::download_models")
