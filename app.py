@@ -52,7 +52,7 @@ CACHE_DIR = "/model_cache"
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
-    max_inputs=10
+    concurrency_limit=10
 )
 class SD35Model:
     
@@ -166,7 +166,7 @@ class SD35Model:
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
     timeout=1800,
-    max_inputs=10
+    concurrency_limit=10
 )
 class QwenModel:
     
@@ -278,7 +278,7 @@ class QwenModel:
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("custom-secret")],
-    max_inputs=100
+    concurrency_limit=100
 )
 @modal.asgi_app()
 def fastapi_app():
