@@ -24,11 +24,11 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
     "(full body shot)"
 )
 
+# -------------------------------------------------------------------
+# FIX 1 & 2: liblzma5 (buat _lzma) DAN libgomp1 (buat torch)
+# -------------------------------------------------------------------
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    # -------------------------------------------------------------------
-    # "libgomp1" DITAMBAHIN DI SINI
-    # -------------------------------------------------------------------
     .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5", "libgomp1") 
     .pip_install(
         "fastapi[standard]",
@@ -54,16 +54,20 @@ BASE_MIN_SIZE_BYTES = 3_000_000_000
 # --- MODEL REFINER (DARI LINK LO) ---
 REFINER_MODEL_URL = "https://civitai.com/api/download/models/128080?type=Model&format=SafeTensor&size=pruned&fp=fp16"
 REFINER_MODEL_FILENAME = "civitai_model_refiner.safetensors"
-REFINER_MIN_SIZE_BYTES = 2_000_000_000 # Kasih batas aman
+REFINER_MIN_SIZE_BYTES = 2_000_000_000
 
 # --- MODEL VAE (DARI LINK LO) ---
 VAE_MODEL_URL = "https://civitai.com/api/download/models/333245?type=Model&format=SafeTensor"
 VAE_MODEL_FILENAME = "civitai_model_vae.safetensors"
-VAE_MIN_SIZE_BYTES = 100_000_000 # Kasih batas aman
+VAE_MIN_SIZE_BYTES = 100_000_000
 
+# -------------------------------------------------------------------
+# FIX 3: FUNGSI DOWNLOAD DENGAN TOKEN HARDCODED
+# -------------------------------------------------------------------
 def _download_file(url: str, local_path: Path, min_size: int, force: bool = False):
     """Fungsi download yang robust dengan pengecekan ukuran file."""
     import requests
+    # Nggak perlu import os
     
     local_path = Path(local_path)
     
@@ -84,8 +88,17 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
                 pass 
     
     print(f"Mengunduh {local_path.name} dari {url[:50]}...")
+    
+    # --- TOKEN LO DI-HARDCODE DI SINI ---
+    headers = {"User-Agent": "Modal-Downloader"}
+    token = "f3d4c39bf38181d3a94894f89e074056" # <-- TOKEN LO ANJING
+    
+    headers["Authorization"] = f"Bearer {token}"
+    print("  ...menggunakan CivitAI API Key (hardcoded).")
+        
     try:
-        with requests.get(url, stream=True, timeout=300, headers={"User-Agent": "Modal-Downloader"}) as r:
+        # Tambahin 'headers=headers' di request
+        with requests.get(url, stream=True, timeout=300, headers=headers) as r: 
             r.raise_for_status()
             total = int(r.headers.get('content-length', 0))
             downloaded = 0
@@ -115,7 +128,7 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
     image=image,
     volumes={MODEL_DIR: model_volume},
     timeout=3600
-    # Nggak perlu secret HF lagi!
+    # Nggak perlu secret CivitAI lagi, token udah di hardcode
 )
 def download_models():
     """Download SEMUA model dari CivitAI"""
@@ -163,7 +176,7 @@ def download_models():
     gpu="L4", 
     volumes={MODEL_DIR: model_volume},
     scaledown_window=200 
-    # Nggak perlu secret HF lagi!
+    # Nggak perlu secret HF atau CivitAI
 )
 class ModelInference:
     @modal.enter()
@@ -203,15 +216,10 @@ class ModelInference:
             print("✓ Base Model dimuat")
             
             print("\n[3/3] Memuat Refiner Model (dari file)...")
-            # Kita load refiner pake StableDiffusionXLPipeline juga, 
-            # BUKAN StableDiffusionXLImg2ImgPipeline
-            # Ini kuncinya, karena class ini support from_single_file
             self.refiner_pipe = StableDiffusionXLPipeline.from_single_file(
                 refiner_model_path,
                 torch_dtype=torch.float16,
                 use_safetensors=True,
-                # Kita "pinjam" text encoder & tokenizer dari base pipe
-                # Biar hemat VRAM
                 text_encoder=self.base_pipe.text_encoder,
                 tokenizer=self.base_pipe.tokenizer,
                 text_encoder_2=self.base_pipe.text_encoder_2,
@@ -272,8 +280,6 @@ class ModelInference:
         ).images
 
         print(f"[Refiner] Refining output...")
-        # Panggilannya tetep sama, karena StableDiffusionXLPipeline
-        # juga bisa handle 'image' dan 'denoising_start'
         image = self.refiner_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
@@ -353,7 +359,7 @@ class ModelInference:
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("custom-secret")] # Secret API_KEY lo tetep perlu
+    secrets=[modal.Secret.from_name("custom-secret")] # Secret API_KEY lo buat ngamanin API
 )
 @modal.asgi_app()
 def fastapi_app():
@@ -367,7 +373,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "6.0-nohf", # Kasih tanda
+            "version": "6.0-nohf-fixed", # Kasih tanda
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
