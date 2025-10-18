@@ -43,17 +43,12 @@ image = (
 model_volume = modal.Volume.from_name("sdxl-juggernaut-refiner-cache", create_if_missing=True)
 MODEL_DIR = "/models"
 
-BASE_MODEL_URL = "https://civitai.com/api/download/models/1759168"
-BASE_MODEL_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors"
-BASE_MIN_SIZE_BYTES = 6_000_000_000
+BASE_MODEL_URL = "https://civitai.com/api/download/models/1759168?type=Model&format=SafeTensor&size=full&fp=fp16"
+BASE_MODEL_FILENAME = "civitai_model.safetensors"
+BASE_MIN_SIZE_BYTES = 3_000_000_000
 
-REFINER_MODEL_URL = "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/diffusion_pytorch_model.safetensors"
-REFINER_MODEL_FILENAME = "sdxl_refiner_1.0.safetensors"
-REFINER_MIN_SIZE_BYTES = 5_000_000_000
-
-VAE_MODEL_URL = "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/diffusion_pytorch_model.safetensors"
-VAE_MODEL_FILENAME = "sdxl_vae.safetensors"
-VAE_MIN_SIZE_BYTES = 300_000_000
+REFINER_MODEL_ID = "stabilityai/stable-diffusion-xl-refiner-1.0"
+VAE_MODEL_ID = "stabilityai/sdxl-vae"
 
 def _download_file(url: str, local_path: Path, min_size: int, force: bool = False):
     """Fungsi download yang robust dengan pengecekan ukuran file."""
@@ -77,7 +72,7 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
             except:
                 pass 
     
-    print(f"Mengunduh {local_path.name} dari {url}...")
+    print(f"Mengunduh {local_path.name}...")
     try:
         with requests.get(url, stream=True, timeout=300) as r:
             r.raise_for_status()
@@ -108,38 +103,50 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
 @app.function(
     image=image,
     volumes={MODEL_DIR: model_volume},
-    timeout=7200
+    timeout=3600
 )
 def download_models():
-    """Download Base, Refiner, dan VAE"""
+    """Download Base Model dari CivitAI"""
+    from diffusers.models import AutoencoderKL
+    from diffusers import StableDiffusionXLImg2ImgPipeline
+    import torch
+    
     os.makedirs(MODEL_DIR, exist_ok=True)
     
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("MEMULAI DOWNLOAD MODEL")
     print("=" * 60)
     
+    print("\n[1/2] Download Base Model (CivitAI)...")
     _download_file(
         BASE_MODEL_URL,
         Path(MODEL_DIR) / BASE_MODEL_FILENAME,
         BASE_MIN_SIZE_BYTES
     )
     
-    _download_file(
-        REFINER_MODEL_URL,
-        Path(MODEL_DIR) / REFINER_MODEL_FILENAME,
-        REFINER_MIN_SIZE_BYTES
+    print("\n[2/2] Preload Refiner + VAE dari HuggingFace...")
+    vae = AutoencoderKL.from_pretrained(
+        VAE_MODEL_ID,
+        torch_dtype=torch.float16,
+        use_safetensors=True,
+        variant="fp16",
+        cache_dir=MODEL_DIR
     )
+    print("✓ VAE preloaded")
     
-    _download_file(
-        VAE_MODEL_URL,
-        Path(MODEL_DIR) / VAE_MODEL_FILENAME,
-        VAE_MIN_SIZE_BYTES
+    refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+        REFINER_MODEL_ID,
+        torch_dtype=torch.float16,
+        use_safetensors=True,
+        variant="fp16",
+        cache_dir=MODEL_DIR
     )
+    print("✓ Refiner preloaded")
     
     model_volume.commit()
-    print("=" * 60)
-    print("✓ SEMUA MODEL BERHASIL DIUNDUH")
-    print("=" * 60)
+    print("\n" + "=" * 60)
+    print("✓ SEMUA MODEL BERHASIL DIDOWNLOAD")
+    print("=" * 60 + "\n")
     return True
 
 
@@ -154,42 +161,53 @@ class ModelInference:
     def load_model(self):
         """Load model saat container start"""
         from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
-        from safetensors.torch import load_file
+        from diffusers.models import AutoencoderKL
         import torch
         
         base_model_path = f"{MODEL_DIR}/{BASE_MODEL_FILENAME}"
-        refiner_model_path = f"{MODEL_DIR}/{REFINER_MODEL_FILENAME}"
-        vae_model_path = f"{MODEL_DIR}/{VAE_MODEL_FILENAME}"
-
+        
         print("\n" + "=" * 60)
         print("MEMUAT MODEL INFERENCE")
         print("=" * 60)
         
         try:
-            print("\n[1/2] Memuat Base Model (Juggernaut)...")
+            print("\n[1/3] Memuat VAE...")
+            self.vae = AutoencoderKL.from_pretrained(
+                VAE_MODEL_ID,
+                torch_dtype=torch.float16,
+                use_safetensors=True,
+                variant="fp16",
+                cache_dir=MODEL_DIR
+            )
+            print("✓ VAE dimuat")
+            
+            print("\n[2/3] Memuat Base Model (CivitAI)...")
             self.base_pipe = StableDiffusionXLPipeline.from_single_file(
                 base_model_path,
                 torch_dtype=torch.float16,
-                use_safetensors=True
+                use_safetensors=True,
+                vae=self.vae
             )
             self.base_pipe.to("cuda")
             self.base_pipe.enable_attention_slicing()
             self.base_pipe.enable_vae_tiling()
-            print("✓ Base Model berhasil dimuat")
+            print("✓ Base Model dimuat")
             
-            print("\n[2/2] Memuat Refiner Model...")
-            self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(
-                refiner_model_path,
+            print("\n[3/3] Memuat Refiner Model...")
+            self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+                REFINER_MODEL_ID,
+                torch_dtype=torch.float16,
+                use_safetensors=True,
+                variant="fp16",
+                cache_dir=MODEL_DIR,
                 text_encoder_2=self.base_pipe.text_encoder_2,
                 tokenizer_2=self.base_pipe.tokenizer_2,
-                vae=self.base_pipe.vae,
-                torch_dtype=torch.float16,
-                use_safetensors=True
+                vae=self.vae
             )
             self.refiner_pipe.to("cuda")
             self.refiner_pipe.enable_attention_slicing()
             self.refiner_pipe.enable_vae_tiling()
-            print("✓ Refiner Model berhasil dimuat")
+            print("✓ Refiner Model dimuat")
             
             print("\n" + "=" * 60)
             print("✓ SEMUA MODEL BERHASIL DIMUAT - UNCENSORED MODE ACTIVE")
@@ -333,7 +351,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "5.0",
+            "version": "6.0",
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
@@ -435,4 +453,4 @@ def fastapi_app():
 @app.local_entrypoint()
 def main():
     print("Untuk men-deploy: modal deploy modal_app.py")
-    print("Untuk download model: modal run modal_app.py::download_models")
+    print("Untuk preload model: modal run modal_app.py::download_models")
