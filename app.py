@@ -1,9 +1,3 @@
-"""
-Deploy Model CivitAI ke Modal.com dengan FastAPI
-Features: Text-to-Image, Image-to-Image, Uncensored
-VERSI 4.2 - Perbaikan libGL.so.1 (OpenCV)
-"""
-
 import modal 
 import io
 import base64
@@ -179,10 +173,10 @@ class ModelInference:
             base_model_path,
             vae=self.vae, 
             torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16"
+            use_safetensors=True
         )
         self.base_pipe.to("cuda")
+        self.base_pipe.enable_attention_slicing()
         
         print("Memuat Refiner Model...")
         self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(
@@ -191,10 +185,10 @@ class ModelInference:
             text_encoder_2=self.base_pipe.text_encoder_2,
             tokenizer_2=self.base_pipe.tokenizer_2,
             torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16"
+            use_safetensors=True
         )
         self.refiner_pipe.to("cuda")
+        self.refiner_pipe.enable_attention_slicing()
         
         print("✓ Model Base + Refiner + VAE berhasil dimuat! Uncensored mode active.")
     
@@ -333,7 +327,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "4.2", # Versi diperbarui
+            "version": "4.3",
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
@@ -443,4 +437,3 @@ def main():
     """
     print("Menjalankan local entrypoint (tidak melakukan apa-apa).")
     print("Untuk men-deploy, jalankan: modal deploy modal_app.py")
-    pass
