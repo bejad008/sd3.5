@@ -4,7 +4,7 @@ import base64
 import os
 from pathlib import Path
 
-app = modal.App("civitai-api-fastapi-nohf") # Ganti nama app-nya dikit
+app = modal.App("civitai-api-fastapi") # Ganti nama app-nya dikit
 
 DEFAULT_NEGATIVE_PROMPT = (
     "nsfw, nude, naked, porn, sex, sexual, explicit, uncensored, "
