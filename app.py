@@ -4,8 +4,7 @@ import base64
 import os
 from pathlib import Path
 
-# Ganti nama app-nya kalo lo mau, tapi ini ga wajib
-app = modal.App("civitai-api-fastapi")
+app = modal.App("civitai-api-fastapi-nohf") # Ganti nama app-nya dikit
 
 DEFAULT_NEGATIVE_PROMPT = (
     "nsfw, nude, naked, porn, sex, sexual, explicit, uncensored, "
@@ -27,9 +26,7 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    # -------------------------------------------------------------------
-    # FIX 1: "liblzma5" DITAMBAHKAN DI SINI BUAT ERROR _lzma
-    # -------------------------------------------------------------------
+    # liblzma5 kita biarin aja, buat jaga-jaga kalo safetensors butuh
     .apt_install("libgl1-mesa-glx", "libglib2.0-0", "libxext6", "libsm6", "liblzma5") 
     .pip_install(
         "fastapi[standard]",
@@ -47,12 +44,20 @@ image = (
 model_volume = modal.Volume.from_name("sdxl-juggernaut-refiner-cache", create_if_missing=True)
 MODEL_DIR = "/models"
 
+# --- MODEL BASE (JUGGERNAUT) ---
 BASE_MODEL_URL = "https://civitai.com/api/download/models/1759168?type=Model&format=SafeTensor&size=full&fp=fp16"
-BASE_MODEL_FILENAME = "civitai_model.safetensors"
+BASE_MODEL_FILENAME = "civitai_model_base.safetensors"
 BASE_MIN_SIZE_BYTES = 3_000_000_000
 
-REFINER_MODEL_ID = "stabilityai/stable-diffusion-xl-refiner-1.0"
-VAE_MODEL_ID = "stabilityai/sdxl-vae"
+# --- MODEL REFINER (DARI LINK LO) ---
+REFINER_MODEL_URL = "https://civitai.com/api/download/models/128080?type=Model&format=SafeTensor&size=pruned&fp=fp16"
+REFINER_MODEL_FILENAME = "civitai_model_refiner.safetensors"
+REFINER_MIN_SIZE_BYTES = 2_000_000_000 # Kasih batas aman
+
+# --- MODEL VAE (DARI LINK LO) ---
+VAE_MODEL_URL = "https://civitai.com/api/download/models/333245?type=Model&format=SafeTensor"
+VAE_MODEL_FILENAME = "civitai_model_vae.safetensors"
+VAE_MIN_SIZE_BYTES = 100_000_000 # Kasih batas aman
 
 def _download_file(url: str, local_path: Path, min_size: int, force: bool = False):
     """Fungsi download yang robust dengan pengecekan ukuran file."""
@@ -76,9 +81,9 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
             except:
                 pass 
     
-    print(f"Mengunduh {local_path.name}...")
+    print(f"Mengunduh {local_path.name} dari {url[:50]}...")
     try:
-        with requests.get(url, stream=True, timeout=300) as r:
+        with requests.get(url, stream=True, timeout=300, headers={"User-Agent": "Modal-Downloader"}) as r:
             r.raise_for_status()
             total = int(r.headers.get('content-length', 0))
             downloaded = 0
@@ -107,56 +112,46 @@ def _download_file(url: str, local_path: Path, min_size: int, force: bool = Fals
 @app.function(
     image=image,
     volumes={MODEL_DIR: model_volume},
-    timeout=3600,
-    # -------------------------------------------------------------------
-    # FIX 2: SECRET HUGGING FACE DITAMBAHKAN DI SINI
-    # (Nama "huggingface-secret" harus sama persis kayak di screenshot lo)
-    # -------------------------------------------------------------------
-    secrets=[modal.Secret.from_name("huggingface-secret")]
+    timeout=3600
+    # Nggak perlu secret HF lagi!
 )
 def download_models():
-    """Download Base Model dari CivitAI"""
-    from diffusers.models import AutoencoderKL
-    from diffusers import StableDiffusionXLImg2ImgPipeline
+    """Download SEMUA model dari CivitAI"""
     import torch
     
     os.makedirs(MODEL_DIR, exist_ok=True)
     
     print("\n" + "=" * 60)
-    print("MEMULAI DOWNLOAD MODEL")
+    print("MEMULAI DOWNLOAD SEMUA MODEL DARI CIVITAI")
     print("=" * 60)
     
-    print("\n[1/2] Download Base Model (CivitAI)...")
+    # 1. Download Base Model
+    print("\n[1/3] Download Base Model (CivitAI)...")
     _download_file(
         BASE_MODEL_URL,
         Path(MODEL_DIR) / BASE_MODEL_FILENAME,
         BASE_MIN_SIZE_BYTES
     )
     
-    print("\n[2/2] Preload Refiner + VAE dari HuggingFace...")
-    # Token dari secret akan otomatis dipake di sini
-    vae = AutoencoderKL.from_pretrained(
-        VAE_MODEL_ID,
-        torch_dtype=torch.float16,
-        use_safetensors=True,
-        variant="fp16",
-        cache_dir=MODEL_DIR
+    # 2. Download Refiner Model
+    print("\n[2/3] Download Refiner Model (CivitAI)...")
+    _download_file(
+        REFINER_MODEL_URL,
+        Path(MODEL_DIR) / REFINER_MODEL_FILENAME,
+        REFINER_MIN_SIZE_BYTES
     )
-    print("✓ VAE preloaded")
-    
-    # Token dari secret akan otomatis dipake di sini
-    refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-        REFINER_MODEL_ID,
-        torch_dtype=torch.float16,
-        use_safetensors=True,
-        variant="fp16",
-        cache_dir=MODEL_DIR
+
+    # 3. Download VAE Model
+    print("\n[3/3] Download VAE Model (CivitAI)...")
+    _download_file(
+        VAE_MODEL_URL,
+        Path(MODEL_DIR) / VAE_MODEL_FILENAME,
+        VAE_MIN_SIZE_BYTES
     )
-    print("✓ Refiner preloaded")
     
     model_volume.commit()
     print("\n" + "=" * 60)
-    print("✓ SEMUA MODEL BERHASIL DIDOWNLOAD")
+    print("✓ SEMUA MODEL BERHASIL DIDOWNLOAD (FULL CIVITAI)")
     print("=" * 60 + "\n")
     return True
 
@@ -165,11 +160,8 @@ def download_models():
     image=image,
     gpu="L4", 
     volumes={MODEL_DIR: model_volume},
-    scaledown_window=200,
-    # -------------------------------------------------------------------
-    # FIX 2 (lagi): SECRET HUGGING FACE JUGA DITAMBAHKAN DI SINI
-    # -------------------------------------------------------------------
-    secrets=[modal.Secret.from_name("huggingface-secret")]
+    scaledown_window=200 
+    # Nggak perlu secret HF lagi!
 )
 class ModelInference:
     @modal.enter()
@@ -179,21 +171,20 @@ class ModelInference:
         from diffusers.models import AutoencoderKL
         import torch
         
+        # Definisikan semua path file
         base_model_path = f"{MODEL_DIR}/{BASE_MODEL_FILENAME}"
+        refiner_model_path = f"{MODEL_DIR}/{REFINER_MODEL_FILENAME}"
+        vae_model_path = f"{MODEL_DIR}/{VAE_MODEL_FILENAME}"
         
         print("\n" + "=" * 60)
-        print("MEMUAT MODEL INFERENCE")
+        print("MEMUAT MODEL INFERENCE (FULL CIVITAI)")
         print("=" * 60)
         
         try:
-            print("\n[1/3] Memuat VAE...")
-            # Token dari secret akan otomatis dipake di sini
-            self.vae = AutoencoderKL.from_pretrained(
-                VAE_MODEL_ID,
+            print("\n[1/3] Memuat VAE (dari file)...")
+            self.vae = AutoencoderKL.from_single_file(
+                vae_model_path,
                 torch_dtype=torch.float16,
-                use_safetensors=True,
-                variant="fp16",
-                cache_dir=MODEL_DIR
             )
             print("✓ VAE dimuat")
             
@@ -209,14 +200,18 @@ class ModelInference:
             self.base_pipe.enable_vae_tiling()
             print("✓ Base Model dimuat")
             
-            print("\n[3/3] Memuat Refiner Model...")
-            # Token dari secret akan otomatis dipake di sini
-            self.refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-                REFINER_MODEL_ID,
+            print("\n[3/3] Memuat Refiner Model (dari file)...")
+            # Kita load refiner pake StableDiffusionXLPipeline juga, 
+            # BUKAN StableDiffusionXLImg2ImgPipeline
+            # Ini kuncinya, karena class ini support from_single_file
+            self.refiner_pipe = StableDiffusionXLPipeline.from_single_file(
+                refiner_model_path,
                 torch_dtype=torch.float16,
                 use_safetensors=True,
-                variant="fp16",
-                cache_dir=MODEL_DIR,
+                # Kita "pinjam" text encoder & tokenizer dari base pipe
+                # Biar hemat VRAM
+                text_encoder=self.base_pipe.text_encoder,
+                tokenizer=self.base_pipe.tokenizer,
                 text_encoder_2=self.base_pipe.text_encoder_2,
                 tokenizer_2=self.base_pipe.tokenizer_2,
                 vae=self.vae
@@ -275,6 +270,8 @@ class ModelInference:
         ).images
 
         print(f"[Refiner] Refining output...")
+        # Panggilannya tetep sama, karena StableDiffusionXLPipeline
+        # juga bisa handle 'image' dan 'denoising_start'
         image = self.refiner_pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
@@ -296,7 +293,7 @@ class ModelInference:
             "negative_prompt": final_negative_prompt,
             "seed": seed if seed != -1 else "random",
             "uncensored": True,
-            "workflow": "Base + Refiner"
+            "workflow": "Base + Refiner (Full CivitAI)"
         }
     
     @modal.method()
@@ -354,8 +351,7 @@ class ModelInference:
 
 @app.function(
     image=image,
-    # Jangan lupa lo punya secret API_KEY, tetep dipake
-    secrets=[modal.Secret.from_name("custom-secret")]
+    secrets=[modal.Secret.from_name("custom-secret")] # Secret API_KEY lo tetep perlu
 )
 @modal.asgi_app()
 def fastapi_app():
@@ -369,7 +365,7 @@ def fastapi_app():
     async def root():
         return {
             "service": "CivitAI Model API - Uncensored (SDXL Base + Refiner)",
-            "version": "6.0",
+            "version": "6.0-nohf", # Kasih tanda
             "gpu": "L4",
             "default_steps": 30,
             "default_i2i_seed": 5,
@@ -385,7 +381,7 @@ def fastapi_app():
         return {
             "status": "healthy", 
             "service": "civitai-model-api",
-            "mode": "uncensored-sdxl-base-refiner" 
+            "mode": "uncensored-sdxl-base-refiner (Full CivitAI)" 
         }
 
     @web_app.post("/text2img")
