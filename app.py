@@ -36,7 +36,7 @@ image = (
         "git+https://github.com/huggingface/diffusers.git",
         "transformers",
         "accelerate",
-        "safetensors",
+        "safensors",
         "Pillow",
         "sentencepiece",
     )
@@ -47,7 +47,7 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L40S",  # L4 (24GB) cukup untuk Stable Diffusion 3.5
+    gpu="L40S",  # A100 (40GB) untuk SD 3.5
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -86,7 +86,7 @@ class SD35Model:
         except:
             pass
         
-        print("✓ Model SD 3.5 Large berhasil dimuat (DI GPU)")
+        print("✓ Model SD 3.5 Large berhasil dimuat (DI GPU A100)")
     
     def _validate_dimensions(self, width: int, height: int) -> tuple:
         width = max(MIN_IMAGE_SIZE, min(width, MAX_IMAGE_SIZE))
@@ -161,7 +161,7 @@ class SD35Model:
 
 @app.cls(
     image=image,
-    gpu="H100",  # <-- DIUBAH: Menggunakan 1x GPU L40S (48GB VRAM)
+    gpu="H100",  # L40S (48GB) untuk Qwen
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -175,7 +175,7 @@ class QwenModel:
         import torch
         from diffusers import QwenImageEditPlusPipeline
         os.makedirs(CACHE_DIR, exist_ok=True)
-        self.device = "cuda"  # L40S adalah GPU tunggal, jadi "cuda" sudah benar
+        self.device = "cuda"
         
         print("Memuat model Qwen Image Edit...")
         model_id_qwen = "Qwen/Qwen-Image-Edit-2509"
@@ -186,8 +186,6 @@ class QwenModel:
             token=os.environ.get("HF_TOKEN"),
         )
         
-        # Kode ini sekarang akan berfungsi karena L40S (48GB)
-        # memiliki VRAM yang cukup untuk memuat seluruh model
         self.pipe.to(self.device)
         
         if hasattr(self.pipe, 'enable_attention_slicing'):
@@ -212,11 +210,12 @@ class QwenModel:
         init_image_b64: str,
         prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 50,
-        guidance_scale: float = 4.0,
-        strength: float = 0.75,
+        num_steps: int = 40,             # <-- DIUBAH: Sesuai README (sebelumnya 50)
+        guidance_scale: float = 1.0,     # <-- DIUBAH: Sesuai README (sebelumnya 4.0)
+        true_cfg_scale: float = 4.0,     # <-- DITAMBAH: Sesuai README
         seed: int = -1,
         enhance_prompt: bool = True
+        # strength: float = 0.75,        <-- DIHAPUS
     ):
         from PIL import Image
         import torch
@@ -246,8 +245,9 @@ class QwenModel:
                     negative_prompt=negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT,
                     generator=generator,
                     guidance_scale=guidance_scale,
+                    true_cfg_scale=true_cfg_scale, # <-- DITAMBAH
                     num_inference_steps=num_steps,
-                    strength=strength
+                    # strength=strength           <-- DIHAPUS
                 ).images[0]
             
             del generator
@@ -264,7 +264,7 @@ class QwenModel:
                 "prompt": prompt,
                 "original_prompt": prompt,
                 "negative_prompt": negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT,
-                "strength": strength,
+                # "strength": strength, # <-- DIHAPUS
                 "seed": seed if seed != -1 else "random",
             }
         except Exception as e:
@@ -302,7 +302,10 @@ def fastapi_app():
         return {
             "service": "Multi-Model API",
             "version": "3.0-OPTIMIZED (SD3.5 + Qwen-Edit)",
-            "gpu": "A100",
+            "gpu_config": {
+                "text-to-image": "A100 (40GB)",
+                "image-to-image": "L40S (48GB)"
+            },
             "architecture": "Separated containers with auto-scaling",
             "concurrency_per_container": 10,
             "endpoints": {
@@ -367,9 +370,10 @@ def fastapi_app():
                 "init_image_b64": init_image,
                 "prompt": prompt,
                 "negative_prompt": data.get("negative_prompt", ""),
-                "num_steps": data.get("num_steps", 50),
-                "guidance_scale": data.get("guidance_scale", 4.0),
-                "strength": data.get("strength", 0.75),
+                "num_steps": data.get("num_steps", 40),            # <-- DIUBAH
+                "guidance_scale": data.get("guidance_scale", 1.0),  # <-- DIUBAH
+                "true_cfg_scale": data.get("true_cfg_scale", 4.0),  # <-- DITAMBAH
+                # "strength": data.get("strength", 0.75),         <-- DIHAPUS
                 "seed": data.get("seed", -1),
                 "enhance_prompt": data.get("enhance_prompt", True)
             }
@@ -390,14 +394,11 @@ def main():
     print("Aplikasi OPTIMIZED siap untuk di-deploy ke Modal")
     print("=" * 80)
     print("\nOPTIMASI yang diterapkan:")
-    print("✅ SD3.5 dan Qwen di container terpisah (NO CPU/GPU switching overhead)")
+    print("✅ SD3.5 (T2I) -> A100 (40GB)")
+    print("✅ Qwen-Edit (I2I) -> L40S (48GB)")
+    print("✅ Parameter 'strength' dihapus dari Qwen & diganti 'true_cfg_scale'")
     print("✅ Setiap container handle 10 concurrent requests")
     print("✅ Modal auto-scale containers sesuai load")
-    print("✅ Gateway bisa handle 100 concurrent")
-    print("\nYang TIDAK diubah:")
-    print("✅ App name: civitai-api-fastapi")
-    print("✅ Model: SD3.5 + Qwen (original)")
-    print("✅ Endpoint: /text2img dan /img2img (original)")
     print("\nDeploy:")
     print("   modal deploy app.py")
     print("=" * 80)
