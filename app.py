@@ -6,13 +6,17 @@ import warnings
 
 app = modal.App("civitai-api-fastapi")
 
+# --- PERUBAHAN 1: Negative Prompt Diperbarui ---
+# Menambahkan lebih banyak istilah untuk menghindari anatomi yang buruk
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
-    "(extra limbs, extra fingers, malformed hands, missing fingers, extra digit, "
-    "fused fingers, too many hands, bad hands, bad anatomy), "
     "(ugly, deformed, disfigured), "
     "(text, watermark, logo, signature), "
     "out of frame, out of focus, cropped, "
+    "(extra limbs, extra legs, extra feet, extra fingers, extra digit), "
+    "(malformed hands, malformed legs, malformed feet), "
+    "(missing limbs, missing legs, missing feet, missing fingers), "
+    "(fused fingers, fused legs, fused feet, too many hands, bad hands, bad anatomy, double feet, kaki ganda, kaki tambahan)"
 )
 
 DEFAULT_POSITIVE_PROMPT_SUFFIX = (
@@ -56,8 +60,10 @@ class ModelInference:
 
         os.makedirs(CACHE_DIR, exist_ok=True)
         
-        print("Memuat model Stable Diffusion 3.5 Large...")
-        model_id = "stabilityai/stable-diffusion-3.5-large"
+        # --- PERUBAHAN 2: Model ID Diperbarui ---
+        # Mengganti dari '3.5-large' yang error ke '3-medium' yang berfungsi
+        print("Memuat model Stable Diffusion 3 Medium...")
+        model_id = "stabilityai/stable-diffusion-3-medium-diffusers"
 
         self.pipe = StableDiffusion3Pipeline.from_pretrained(
             model_id,
@@ -67,7 +73,7 @@ class ModelInference:
         )
 
         self.pipe.to("cuda")
-        print("✓ Model SD 3.5 Large berhasil dimuat!")
+        print("✓ Model SD 3 Medium berhasil dimuat!")
 
     @modal.method()
     def text_to_image(
@@ -88,7 +94,7 @@ class ModelInference:
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
 
-        print(f"Text-to-Image (SD3.5): {enhanced_prompt[:100]}...")
+        print(f"Text-to-Image (SD3): {enhanced_prompt[:100]}...")
         generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
 
         image = self.pipe(
@@ -133,13 +139,15 @@ class ModelInference:
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
         
-        print(f"Image-to-Image (SD3.5): {enhanced_prompt[:100]}...")
+        print(f"Image-to-Image (SD3): {enhanced_prompt[:100]}...")
         
         init_image_bytes = base64.b64decode(init_image_b64)
         init_image = Image.open(io.BytesIO(init_image_bytes)).convert("RGB")
         
         generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
         
+        # Kode ini sekarang akan berfungsi karena model '3-medium'
+        # menerima argumen 'image'
         image = self.pipe(
             prompt=enhanced_prompt,
             negative_prompt=final_negative_prompt,
@@ -177,7 +185,7 @@ def fastapi_app():
     @web_app.get("/")
     async def root():
         return {
-            "service": "Stable Diffusion 3.5 Large API",
+            "service": "Stable Diffusion 3 Medium API", # Diperbarui
             "version": "1.1",
             "endpoints": {
                 "health": "GET /health",
