@@ -43,7 +43,7 @@ image = (
 model_volume = modal.Volume.from_name("sdxl-juggernaut-refiner-cache", create_if_missing=True)
 MODEL_DIR = "/models"
 
-BASE_MODEL_URL = "https://civitai.com/api/download/models/257749"
+BASE_MODEL_URL = "https://civitai.com/api/download/models/1759168"
 BASE_MODEL_FILENAME = "juggernaut-xl-v9-rundiffusion.safetensors"
 BASE_MIN_SIZE_BYTES = 6_000_000_000
 
