@@ -36,6 +36,7 @@ image = (
     .pip_install(
         "fastapi[standard]",
         "torch==2.1.0",
+        "huggingface-hub<0.20.0",
         "numpy<2.0",  # <--- TAMBAHKAN INI BUAT FIX ERROR
         "diffusers==0.24.0",
         "transformers==4.35.2",
