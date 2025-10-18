@@ -47,7 +47,7 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="L4",
+    gpu="L4",  # L4 (24GB) cukup untuk Stable Diffusion 3.5
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -161,7 +161,7 @@ class SD35Model:
 
 @app.cls(
     image=image,
-    gpu="L4:4",
+    gpu="L40S",  # <-- DIUBAH: Menggunakan 1x GPU L40S (48GB VRAM)
     secrets=[modal.Secret.from_name("huggingface-secret")],
     volumes={CACHE_DIR: model_cache},
     scaledown_window=300,
@@ -175,17 +175,19 @@ class QwenModel:
         import torch
         from diffusers import QwenImageEditPlusPipeline
         os.makedirs(CACHE_DIR, exist_ok=True)
-        self.device = "cuda"
+        self.device = "cuda"  # L40S adalah GPU tunggal, jadi "cuda" sudah benar
         
         print("Memuat model Qwen Image Edit...")
         model_id_qwen = "Qwen/Qwen-Image-Edit-2509"
-        self.pipe = QwenImageEditPlusPipeline.from_pretrained(  # <-- GANTI KE SINI
+        self.pipe = QwenImageEditPlusPipeline.from_pretrained(
             model_id_qwen,
             torch_dtype=torch.bfloat16,
             cache_dir=CACHE_DIR,
             token=os.environ.get("HF_TOKEN"),
         )
         
+        # Kode ini sekarang akan berfungsi karena L40S (48GB)
+        # memiliki VRAM yang cukup untuk memuat seluruh model
         self.pipe.to(self.device)
         
         if hasattr(self.pipe, 'enable_attention_slicing'):
@@ -199,7 +201,7 @@ class QwenModel:
         except:
             pass
         
-        print("✓ Model Qwen Image Edit berhasil dimuat (DI GPU)")
+        print("✓ Model Qwen Image Edit berhasil dimuat (DI GPU L40S)")
     
     def _validate_steps(self, steps: int) -> int:
         return max(MIN_STEPS, min(steps, MAX_STEPS))
