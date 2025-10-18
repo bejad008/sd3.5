@@ -4,7 +4,7 @@ import base64
 import os
 from pathlib import Path
 
-app = modal.App("civitai-api-fastapi") # <-- Nama app sudah dibalikin
+app = modal.App("civitai-api-fastapi") # <-- Nama app lo
 
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
@@ -19,21 +19,19 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
     "masterpiece, best quality, 8k, photorealistic, intricate details, professional photo"
 )
 
-# Install diffusers versi terbaru langsung dari github
-# untuk memastikan QwenImageEditPipeline ada.
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")  # <--- FIX ERROR 'git' not found
+    .apt_install("git")
     .pip_install(
         "fastapi[standard]",
         "torch",
-        "git+https://github.com/huggingface/diffusers.git", # Wajib untuk Qwen
+        "torchvision",
+        "git+https://github.com/huggingface/diffusers.git",
         "transformers",
         "accelerate",
         "safetensors",
         "Pillow",
         "sentencepiece",
-        "torchvision",
     )
 )
 
@@ -42,10 +40,10 @@ CACHE_DIR = "/model_cache"
 
 @app.cls(
     image=image,
-    gpu="A100", # GPU besar untuk 2 model
+    gpu="A100", # Tetap pake A100
     secrets=[
-        modal.Secret.from_name("huggingface-secret"), # Butuh HF_TOKEN
-        modal.Secret.from_name("custom-secret")      # Butuh API_KEY
+        modal.Secret.from_name("huggingface-secret"),
+        modal.Secret.from_name("custom-secret")
     ],
     volumes={CACHE_DIR: model_cache},
     container_idle_timeout=300,
@@ -58,8 +56,9 @@ class ModelInference:
         from diffusers import StableDiffusion3Pipeline, QwenImageEditPipeline
 
         os.makedirs(CACHE_DIR, exist_ok=True)
+        self.device = "cuda"
         
-        # 1. Load Model SD 3.5 (untuk Text-to-Image)
+        # --- INI FIX-NYA ---
         print("Memuat model Stable Diffusion 3.5 Large...")
         model_id_sd3 = "stabilityai/stable-diffusion-3.5-large"
         self.sd3_pipe = StableDiffusion3Pipeline.from_pretrained(
@@ -68,20 +67,22 @@ class ModelInference:
             use_auth_token=os.environ["HF_TOKEN"],
             cache_dir=CACHE_DIR
         )
-        self.sd3_pipe.to("cuda")
-        print("✓ Model SD 3.5 Large berhasil dimuat!")
+        # LANGSUNG PAKSA PINDAH KE CPU BIAR VRAM KOSONG
+        self.sd3_pipe.to("cpu") 
+        print("✓ Model SD 3.5 Large berhasil dimuat (di CPU).")
 
-        # 2. Load Model Qwen (untuk Image-to-Image)
         print("Memuat model Qwen Image Edit...")
-        model_id_qwen = "Qwen/Qwen-Image-Edit" # Sesuai permintaan
+        model_id_qwen = "Qwen/Qwen-Image-Edit" 
         self.qwen_pipe = QwenImageEditPipeline.from_pretrained(
             model_id_qwen,
-            torch_dtype=torch.bfloat16, # bfloat16 direkomendasikan
+            torch_dtype=torch.bfloat16,
             cache_dir=CACHE_DIR,
             use_auth_token=os.environ["HF_TOKEN"],
         )
-        self.qwen_pipe.to("cuda")
-        print("✓ Model Qwen Image Edit berhasil dimuat!")
+        # LANGSUNG PAKSA PINDAH KE CPU BIAR VRAM KOSONG
+        self.qwen_pipe.to("cpu")
+        print("✓ Model Qwen Image Edit berhasil dimuat (di CPU).")
+        print("--- VRAM KOSONG, SIAP MENERIMA REQUEST ---")
 
 
     @modal.method()
@@ -102,7 +103,13 @@ class ModelInference:
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
 
         print(f"Text-to-Image (SD3.5): {enhanced_prompt[:100]}...")
-        generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
+        
+        # --- Sistem Ganti Jaga ---
+        print("Memindahkan SD3.5 ke GPU...")
+        self.sd3_pipe.to(self.device)
+        print("✓ SD3.5 di GPU.")
+        
+        generator = torch.Generator(device=self.device).manual_seed(seed) if seed != -1 else None
 
         image = self.sd3_pipe(
             prompt=enhanced_prompt,
@@ -113,6 +120,11 @@ class ModelInference:
             height=height,
             generator=generator
         ).images[0]
+        
+        # --- Sistem Ganti Jaga ---
+        print("Memindahkan SD3.5 kembali ke CPU...")
+        self.sd3_pipe.to("cpu")
+        print("✓ SD3.5 di CPU.")
 
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
@@ -130,34 +142,42 @@ class ModelInference:
     def image_to_image(
         self,
         init_image_b64: str,
-        prompt: str,  # Ini adalah INSTRUKSI (cth: "make his hat blue")
+        prompt: str,
         negative_prompt: str = "",
-        num_steps: int = 50,         # Qwen pakai 50 di doc
-        guidance_scale: float = 4.0, # Qwen pakai true_cfg_scale=4.0 di doc
-        strength: float = 0.75,      # Diabaikan
+        num_steps: int = 50,
+        guidance_scale: float = 4.0,
+        strength: float = 0.75,
         seed: int = -1,
-        enhance_prompt: bool = True  # Diabaikan
+        enhance_prompt: bool = True
     ):
         from PIL import Image
         import torch
         
         print(f"Image-to-Image (Qwen): {prompt[:100]}...")
         
+        # --- Sistem Ganti Jaga ---
+        print("Memindahkan Qwen ke GPU...")
+        self.qwen_pipe.to(self.device)
+        print("✓ Qwen di GPU.")
+        
         init_image_bytes = base64.b64decode(init_image_b64)
         init_image = Image.open(io.BytesIO(init_image_bytes)).convert("RGB")
         
-        generator = torch.Generator(device="cuda").manual_seed(seed) if seed != -1 else None
+        generator = torch.Generator(device=self.device).manual_seed(seed) if seed != -1 else None
         
-        # Qwen pakai parameter yang beda.
         image = self.qwen_pipe(
             image=init_image,
             prompt=prompt,
-            # Qwen rekomendasi " " jika tidak ada negative prompt
             negative_prompt=negative_prompt.strip() or " ", 
             generator=generator,
-            true_cfg_scale=guidance_scale, # Ini parameter Qwen yg bener
-            num_inference_steps=num_steps  # Qwen butuh steps lebih banyak
+            true_cfg_scale=guidance_scale,
+            num_inference_steps=num_steps
         ).images[0]
+        
+        # --- Sistem Ganti Jaga ---
+        print("Memindahkan Qwen kembali ke CPU...")
+        self.qwen_pipe.to("cpu")
+        print("✓ Qwen di CPU.")
         
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
@@ -165,7 +185,7 @@ class ModelInference:
         
         return {
             "image": img_str,
-            "prompt": prompt, # Prompt di sini adalah instruksi edit
+            "prompt": prompt,
             "original_prompt": prompt,
             "negative_prompt": negative_prompt.strip() or " ",
             "strength": "N/A (Qwen Model)",
@@ -187,7 +207,8 @@ def fastapi_app():
     async def root():
         return {
             "service": "Multi-Model API",
-            "version": "2.1 (SD3.5 + Qwen-Edit)",
+            "version": "2.2-OOM-FIX (SD3.5 + Qwen-Edit)",
+            "gpu": "A100", # Info GPU
             "endpoints": {
                 "health": "GET /health",
                 "text-to-image": "POST /text2img (Stable Diffusion 3.5)",
@@ -250,11 +271,11 @@ def fastapi_app():
                 "init_image_b64": init_image,
                 "prompt": prompt,
                 "negative_prompt": data.get("negative_prompt", ""),
-                "num_steps": data.get("num_steps", 50),     # Default Qwen
-                "guidance_scale": data.get("guidance_scale", 4.0), # Default Qwen
-                "strength": data.get("strength", 0.75),      # Diabaikan
+                "num_steps": data.get("num_steps", 50),
+                "guidance_scale": data.get("guidance_scale", 4.0),
+                "strength": data.get("strength", 0.75),
                 "seed": data.get("seed", -1),
-                "enhance_prompt": data.get("enhance_prompt", True) # Diabaikan
+                "enhance_prompt": data.get("enhance_prompt", True)
             }
             
             model = ModelInference()
