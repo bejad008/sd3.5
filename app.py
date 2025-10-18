@@ -308,7 +308,7 @@ class QwenModel:
     image=image,
     secrets=[modal.Secret.from_name("custom-secret")]
 )
-@modal.concurrent(max_inputs=100)  # OPTIMASI: Gateway bisa handle 100 concurrent
+  # OPTIMASI: Gateway bisa handle 100 concurrent
 @modal.asgi_app()
 def fastapi_app():
     from fastapi import FastAPI, HTTPException, Request
