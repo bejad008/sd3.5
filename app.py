@@ -1,17 +1,11 @@
-"""
-Deploy Stable Diffusion 3.5 Large ke Modal.com dengan FastAPI
-Metode ini menggunakan from_pretrained untuk memuat model dari Hugging Face.
-"""
-
 import modal
 import io
 import base64
 import os
+import warnings
 
-# --- Konfigurasi App ---
 app = modal.App("civitai-api-fastapi")
 
-# --- Default Prompts ---
 DEFAULT_NEGATIVE_PROMPT = (
     "(worst quality, low quality, normal quality, blurry, fuzzy, pixelated), "
     "(extra limbs, extra fingers, malformed hands, missing fingers, extra digit, "
@@ -25,8 +19,6 @@ DEFAULT_POSITIVE_PROMPT_SUFFIX = (
     "masterpiece, best quality, 8k, photorealistic, intricate details, professional photo"
 )
 
-# --- Definisi Image Container ---
-# Menambahkan 'bitsandbytes' untuk efisiensi
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -42,40 +34,38 @@ image = (
     )
 )
 
-# --- Class untuk Inference Model ---
+model_cache = modal.Volume.persisted("sd3-model-cache-vol")
+CACHE_DIR = "/model_cache"
+
 @app.cls(
     image=image,
-    gpu="L40S",  # T4 atau yang lebih baik sangat direkomendasikan
-    # Rahasia untuk otentikasi Hugging Face dan API Key Anda
+    gpu="L40S",
     secrets=[
-        modal.Secret.from_name("huggingface-secret"), # WAJIB untuk download model
-        modal.Secret.from_name("custom-secret")      # Untuk API Key endpoint Anda
+        modal.Secret.from_name("huggingface-secret"),
+        modal.Secret.from_name("custom-secret")
     ],
+    volumes={CACHE_DIR: model_cache},
     container_idle_timeout=300,
-    timeout=1800 # Timeout lebih lama untuk download model pertama kali
+    timeout=1800
 )
 class ModelInference:
     @modal.enter()
     def load_model(self):
-        """
-        Load model saat container start.
-        Fungsi from_pretrained akan men-download dan men-cache model secara otomatis.
-        """
         import torch
         from diffusers import StableDiffusion3Pipeline
 
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        
         print("Memuat model Stable Diffusion 3.5 Large...")
         model_id = "stabilityai/stable-diffusion-3.5-large"
 
-        # Menggunakan .from_pretrained dengan token dari Modal Secrets
-        # Ini menggantikan fungsi download_model() dan from_single_file()
         self.pipe = StableDiffusion3Pipeline.from_pretrained(
             model_id,
             torch_dtype=torch.float16,
-            use_auth_token=os.environ["HF_TOKEN"]
+            use_auth_token=os.environ["HF_TOKEN"],
+            cache_dir=CACHE_DIR
         )
 
-        # Kirim model ke GPU
         self.pipe.to("cuda")
         print("✓ Model SD 3.5 Large berhasil dimuat!")
 
@@ -91,10 +81,10 @@ class ModelInference:
         seed: int = -1,
         enhance_prompt: bool = True
     ):
-        """Generate gambar dari teks"""
         import torch
+        
+        warnings.filterwarnings("ignore", message=".*CLIP can only handle sequences up to 77 tokens.*")
 
-        # Logika prompt tetap sama seperti kode original Anda
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
 
@@ -135,9 +125,10 @@ class ModelInference:
         seed: int = -1,
         enhance_prompt: bool = True
     ):
-        """Edit gambar dengan prompt"""
         from PIL import Image
         import torch
+        
+        warnings.filterwarnings("ignore", message=".*CLIP can only handle sequences up to 77 tokens.*")
         
         enhanced_prompt = f"{prompt}, {DEFAULT_POSITIVE_PROMPT_SUFFIX}" if enhance_prompt else prompt
         final_negative_prompt = negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT
@@ -172,8 +163,6 @@ class ModelInference:
             "seed": seed if seed != -1 else "random",
         }
 
-
-# --- Aplikasi FastAPI ---
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("custom-secret")]
@@ -206,7 +195,6 @@ def fastapi_app():
         try:
             data = await request.json()
 
-            # Otentikasi API Key
             if data.get("api_key") != os.environ.get("API_KEY"):
                 raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -214,7 +202,6 @@ def fastapi_app():
             if not prompt:
                 raise HTTPException(status_code=400, detail="Prompt is required")
 
-            # Mengambil parameter dari request, dengan default value
             kwargs = {
                 "prompt": prompt,
                 "negative_prompt": data.get("negative_prompt", ""),
@@ -273,6 +260,5 @@ def fastapi_app():
 
 @app.local_entrypoint()
 def main():
-    """Fungsi ini hanya berjalan jika Anda menjalankan skrip secara lokal."""
     print("Aplikasi siap untuk di-deploy ke Modal dengan perintah:")
     print("modal deploy modal_app.py")
